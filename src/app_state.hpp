@@ -1,0 +1,421 @@
+#pragma once
+
+#include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <cstdlib>
+#include <deque>
+#include <format>
+#include <functional>
+#include <memory>
+#include <optional>
+#include <stop_token>
+#include <string>
+#include <thread>
+#include <unordered_map>
+#include <vector>
+
+#include "dbc_engine.hpp"
+#include "frame_buffer.hpp"
+#include "hardware.hpp"
+#include "logger.hpp"
+#include "permissions.hpp"
+#include "tx_scheduler.hpp"
+#include "types.hpp"
+
+namespace jcan {
+
+struct signal_trace {
+  std::string name;
+  std::string unit;
+  std::deque<float> samples;
+  float last_value{0.f};
+  static constexpr int k_max_samples = 512;
+
+  void push(float v) {
+    last_value = v;
+    samples.push_back(v);
+    if (static_cast<int>(samples.size()) > k_max_samples) samples.pop_front();
+  }
+};
+
+struct signal_watcher_state {
+  std::unordered_map<std::string, signal_trace> traces;
+  bool auto_add{true};
+};
+
+struct bus_stats {
+  using clock = std::chrono::steady_clock;
+
+  struct id_stats {
+    uint64_t total_count{0};
+    uint64_t window_count{0};
+    float rate_hz{0.f};
+  };
+
+  std::unordered_map<uint32_t, id_stats> per_id;
+  uint64_t total_frames{0};
+  uint64_t window_frames{0};
+  double window_bits{0.0};
+  float total_rate_hz{0.f};
+  float bus_load_pct{0.f};
+  clock::time_point window_start{clock::now()};
+
+  uint64_t error_frames{0};
+  uint64_t bus_off_count{0};
+  uint64_t error_passive_count{0};
+  uint8_t last_slcan_status{0};
+
+  void update(float bitrate_bps) {
+    auto now = clock::now();
+    auto window = std::chrono::duration<double>(now - window_start).count();
+    if (window < 0.001) return;
+
+    total_rate_hz =
+        static_cast<float>(static_cast<double>(window_frames) / window);
+
+    for (auto& [id, st] : per_id) {
+      st.rate_hz =
+          static_cast<float>(static_cast<double>(st.window_count) / window);
+    }
+
+    bus_load_pct =
+        (bitrate_bps > 0.f)
+            ? static_cast<float>(window_bits / window /
+                                 static_cast<double>(bitrate_bps) * 100.0)
+            : 0.f;
+
+    if (window > 3.0) {
+      for (auto& [id, st] : per_id) st.window_count = 0;
+      window_frames = 0;
+      window_bits = 0.0;
+      window_start = now;
+    }
+  }
+
+  void record(const can_frame& f) {
+    if (f.error) {
+      error_frames++;
+      return;
+    }
+    total_frames++;
+    window_frames++;
+    uint8_t payload_len = frame_payload_len(f);
+    double frame_bits;
+    if (f.fd) {
+      frame_bits = (29.0 + payload_len * 8.0 + 21.0) * 1.1;
+    } else {
+      frame_bits = (47.0 + payload_len * 8.0) * 1.2;
+    }
+    window_bits += frame_bits;
+    auto& st = per_id[f.id];
+    st.total_count++;
+    st.window_count++;
+  }
+
+  void record_slcan_status(uint8_t status) {
+    last_slcan_status = status;
+    if (status & 0x20) bus_off_count++;
+    if (status & 0x04) error_passive_count++;
+  }
+
+  void reset() {
+    per_id.clear();
+    total_frames = 0;
+    window_frames = 0;
+    window_bits = 0.0;
+    total_rate_hz = 0.f;
+    bus_load_pct = 0.f;
+    error_frames = 0;
+    bus_off_count = 0;
+    error_passive_count = 0;
+    last_slcan_status = 0;
+    window_start = clock::now();
+  }
+};
+
+struct app_state {
+  struct adapter_slot {
+    device_descriptor desc;
+    adapter hw;
+    frame_buffer<8192> rx_buf;
+    std::optional<std::jthread> io_thread;
+
+    void start_io() {
+      io_thread.emplace([this](std::stop_token stop) {
+        while (!stop.stop_requested()) {
+          auto result = adapter_recv_many(hw, 50);
+          if (!result) {
+            if (std::getenv("JCAN_DEBUG"))
+              std::fprintf(stderr, "[io] recv error: %s\n",
+                           to_string(result.error()));
+            continue;
+          }
+          for (auto& f : *result) rx_buf.push(f);
+        }
+      });
+    }
+    void stop_io() { io_thread.reset(); }
+  };
+
+  std::vector<device_descriptor> devices;
+  int selected_device{0};
+  int selected_bitrate{6};
+  std::vector<std::unique_ptr<adapter_slot>> adapter_slots;
+  int tx_slot_idx{0};
+  bool connected{false};
+  std::string status_text{"Disconnected"};
+
+  struct frame_row {
+    can_frame frame;
+    uint64_t count{1};
+    float dt_ms{0.f};
+  };
+  std::vector<frame_row> monitor_rows;
+  std::vector<frame_row> frozen_rows;
+  std::vector<can_frame> scrollback;
+  bool monitor_autoscroll{true};
+  bool monitor_freeze{false};
+  char filter_text[64]{};
+  char scrollback_filter_text[64]{};
+  static constexpr std::size_t k_max_scrollback = 50'000;
+
+  bool show_connection_modal{true};
+  bool show_demo_window{false};
+  bool show_signal_watcher{true};
+  bool show_transmitter{true};
+  bool show_statistics{true};
+  ImFont* mono_font{nullptr};
+
+  can_frame::clock::time_point first_frame_time{};
+  bool has_first_frame{false};
+
+  dbc_engine dbc;
+  std::string last_dbc_path;
+  signal_watcher_state signal_watcher;
+
+  tx_scheduler tx_sched;
+
+  frame_logger logger;
+  frame_buffer<8192> replay_buf;
+  std::optional<std::jthread> replay_thread;
+  std::atomic<bool> replaying{false};
+  std::atomic<bool> replay_paused{false};
+  std::atomic<float> replay_speed{1.0f};
+  std::atomic<float> replay_progress{0.f};
+  std::atomic<std::size_t> replay_total_frames{0};
+
+  bus_stats stats;
+
+  adapter* tx_adapter() {
+    if (tx_slot_idx >= 0 &&
+        tx_slot_idx < static_cast<int>(adapter_slots.size()))
+      return &adapter_slots[static_cast<std::size_t>(tx_slot_idx)]->hw;
+    return nullptr;
+  }
+
+  void connect() {
+    if (devices.empty()) return;
+    const auto& desc = devices[static_cast<std::size_t>(selected_device)];
+
+    for (const auto& slot : adapter_slots) {
+      if (slot->desc.port == desc.port) {
+        status_text = std::format("Already connected: {}", desc.port);
+        return;
+      }
+    }
+
+    auto slot = std::make_unique<adapter_slot>();
+    slot->desc = desc;
+    slot->hw = make_adapter(desc);
+    auto bitrate = static_cast<slcan_bitrate>(selected_bitrate);
+    if (auto r = adapter_open(slot->hw, desc.port, bitrate); !r) {
+      if (r.error() == error_code::permission_denied) {
+        status_text =
+            std::format("Permission denied: {} - requesting fix...", desc.port);
+        if (install_udev_rule()) {
+          std::this_thread::sleep_for(std::chrono::milliseconds(500));
+          slot->hw = make_adapter(desc);
+          if (auto r2 = adapter_open(slot->hw, desc.port, bitrate); !r2) {
+            status_text = std::format("Still failed after fix: {}",
+                                      to_string(r2.error()));
+            return;
+          }
+          status_text = "Permissions fixed!";
+        } else {
+          status_text = "Permission fix cancelled.";
+          return;
+        }
+      } else {
+        status_text = std::format("Open failed: {}", to_string(r.error()));
+        return;
+      }
+    }
+    slot->start_io();
+    adapter_slots.push_back(std::move(slot));
+    connected = true;
+    status_text =
+        std::format("Connected: {} ({} adapter{})", desc.friendly_name,
+                    adapter_slots.size(), adapter_slots.size() > 1 ? "s" : "");
+
+    if (adapter_slots.size() == 1) {
+      tx_slot_idx = 0;
+      tx_sched.start(adapter_slots[0]->hw);
+    }
+  }
+
+  void disconnect_slot(int idx) {
+    if (idx < 0 || idx >= static_cast<int>(adapter_slots.size())) return;
+    if (idx == tx_slot_idx) tx_sched.stop();
+    adapter_slots[static_cast<std::size_t>(idx)]->stop_io();
+    (void)adapter_close(adapter_slots[static_cast<std::size_t>(idx)]->hw);
+    adapter_slots.erase(adapter_slots.begin() + idx);
+
+    if (tx_slot_idx >= static_cast<int>(adapter_slots.size()))
+      tx_slot_idx = std::max(0, static_cast<int>(adapter_slots.size()) - 1);
+
+    if (adapter_slots.empty()) {
+      connected = false;
+      tx_sched.stop();
+      logger.stop();
+      status_text = "Disconnected";
+    } else {
+      if (!tx_sched.running())
+        tx_sched.start(
+            adapter_slots[static_cast<std::size_t>(tx_slot_idx)]->hw);
+      status_text = std::format("{} adapter{} connected", adapter_slots.size(),
+                                adapter_slots.size() > 1 ? "s" : "");
+    }
+  }
+
+  void disconnect() {
+    tx_sched.stop();
+    logger.stop();
+    for (auto& slot : adapter_slots) {
+      slot->stop_io();
+      (void)adapter_close(slot->hw);
+    }
+    adapter_slots.clear();
+    connected = false;
+    status_text = "Disconnected";
+  }
+
+  void poll_frames() {
+    std::vector<can_frame> frames;
+    for (auto& slot : adapter_slots) {
+      auto slot_frames = slot->rx_buf.drain();
+      frames.insert(frames.end(), slot_frames.begin(), slot_frames.end());
+    }
+    auto replay_frames = replay_buf.drain();
+    frames.insert(frames.end(), replay_frames.begin(), replay_frames.end());
+
+    for (auto& f : frames) {
+      if (!has_first_frame) {
+        first_frame_time = f.timestamp;
+        has_first_frame = true;
+      }
+
+      stats.record(f);
+
+      if (f.error) continue;
+
+      scrollback.push_back(f);
+      if (scrollback.size() > k_max_scrollback)
+        scrollback.erase(
+            scrollback.begin(),
+            scrollback.begin() +
+                static_cast<long>(scrollback.size() - k_max_scrollback));
+      logger.log(f);
+
+      if (!monitor_freeze) {
+        bool found = false;
+        for (auto& row : monitor_rows) {
+          if (row.frame.id == f.id && row.frame.extended == f.extended) {
+            auto dt = f.timestamp - row.frame.timestamp;
+            row.dt_ms = std::chrono::duration<float, std::milli>(dt).count();
+            row.frame = f;
+            row.count++;
+            found = true;
+            break;
+          }
+        }
+        if (!found) {
+          monitor_rows.push_back({.frame = f, .count = 1, .dt_ms = 0.f});
+        }
+      }
+    }
+  }
+
+  void toggle_freeze() {
+    monitor_freeze = !monitor_freeze;
+    if (monitor_freeze) {
+      frozen_rows = monitor_rows;
+    }
+  }
+
+  void start_replay(std::vector<std::pair<int64_t, can_frame>> frames) {
+    stop_replay();
+    replaying.store(true);
+    replay_paused.store(false);
+    replay_progress.store(0.f);
+    replay_total_frames.store(frames.size());
+    replay_thread.emplace([this,
+                           frames = std::move(frames)](std::stop_token stop) {
+      if (frames.empty()) {
+        replaying.store(false);
+        return;
+      }
+      auto base = can_frame::clock::now();
+      int64_t first_ts = frames[0].first;
+      auto logical_start = can_frame::clock::now();
+      double logical_us = 0.0;
+
+      for (std::size_t i = 0; i < frames.size() && !stop.stop_requested();
+           ++i) {
+        while (replay_paused.load() && !stop.stop_requested()) {
+          std::this_thread::sleep_for(std::chrono::milliseconds(20));
+          logical_start = can_frame::clock::now();
+        }
+        if (stop.stop_requested()) break;
+
+        double target_us = static_cast<double>(frames[i].first - first_ts);
+        float speed = replay_speed.load();
+        if (speed < 0.1f) speed = 1.0f;
+
+        double wait_us = (target_us - logical_us) / speed;
+        if (wait_us > 0) {
+          auto wake = logical_start +
+                      std::chrono::microseconds(static_cast<int64_t>(wait_us));
+          std::this_thread::sleep_until(wake);
+        }
+
+        logical_us = target_us;
+        logical_start = can_frame::clock::now();
+
+        auto f = frames[i].second;
+        f.timestamp = can_frame::clock::now();
+        replay_buf.push(f);
+        replay_progress.store(static_cast<float>(i + 1) /
+                              static_cast<float>(frames.size()));
+      }
+      replaying.store(false);
+    });
+  }
+
+  void stop_replay() {
+    replay_thread.reset();
+    replaying.store(false);
+    replay_paused.store(false);
+    replay_progress.store(0.f);
+  }
+
+  void clear_monitor() {
+    monitor_rows.clear();
+    frozen_rows.clear();
+    scrollback.clear();
+    stats.reset();
+    has_first_frame = false;
+  }
+};
+
+}  // namespace jcan

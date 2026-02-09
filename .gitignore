@@ -1,0 +1,7 @@
+build/
+.cache/
+imgui.ini
+*.o
+*.d
+compile_commands.json
+*.markdown
