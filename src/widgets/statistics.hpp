@@ -135,4 +135,4 @@ inline void draw_statistics(app_state& state) {
   ImGui::End();
 }
 
-}
+}  // namespace jcan::widgets

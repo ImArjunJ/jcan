@@ -226,4 +226,4 @@ class frame_logger {
   can_frame::clock::time_point start_time_;
 };
 
-}
+}  // namespace jcan

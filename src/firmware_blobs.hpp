@@ -1,7 +1,4 @@
 #pragma once
-// Declarations for VN1640A firmware blobs embedded via assembly .incbin.
-// The actual data is in the generated firmware_blobs.S (from
-// firmware_blobs.S.in).
 
 #include <cstddef>
 #include <cstdint>

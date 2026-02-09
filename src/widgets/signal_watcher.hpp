@@ -71,4 +71,4 @@ inline void draw_signal_watcher(app_state& state) {
   ImGui::End();
 }
 
-}
+}  // namespace jcan::widgets

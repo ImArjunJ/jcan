@@ -60,13 +60,10 @@ class tx_scheduler {
 
   void start(adapter& hw) {
     stop();
-    thread_.emplace(
-        [this, &hw](std::stop_token stop) { run(stop, hw); });
+    thread_.emplace([this, &hw](std::stop_token stop) { run(stop, hw); });
   }
 
-  void stop() {
-    thread_.reset();
-  }
+  void stop() { thread_.reset(); }
 
   bool running() const { return thread_.has_value(); }
 
@@ -99,4 +96,4 @@ class tx_scheduler {
   std::optional<std::jthread> thread_;
 };
 
-}
+}  // namespace jcan

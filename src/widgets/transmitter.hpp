@@ -298,4 +298,4 @@ inline void draw_transmitter(app_state& state) {
   ImGui::End();
 }
 
-}
+}  // namespace jcan::widgets

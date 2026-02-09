@@ -378,4 +378,4 @@ inline void draw_monitor_scrollback(app_state& state) {
   ImGui::End();
 }
 
-}
+}  // namespace jcan::widgets

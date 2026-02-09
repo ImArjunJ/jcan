@@ -74,7 +74,8 @@ class dbc_engine {
   [[nodiscard]] uint8_t message_dlc(uint32_t id) const {
     auto it = msg_index_.find(static_cast<uint64_t>(id));
     if (it == msg_index_.end()) return 8;
-    return static_cast<uint8_t>(std::min<uint64_t>(it->second->MessageSize(), 8));
+    return static_cast<uint8_t>(
+        std::min<uint64_t>(it->second->MessageSize(), 8));
   }
 
   [[nodiscard]] std::vector<signal_info> signal_infos(uint32_t id) const {
@@ -98,7 +99,8 @@ class dbc_engine {
     return out;
   }
 
-  [[nodiscard]] std::vector<decoded_signal> decode(const can_frame& frame) const {
+  [[nodiscard]] std::vector<decoded_signal> decode(
+      const can_frame& frame) const {
     std::vector<decoded_signal> out;
     auto it = msg_index_.find(static_cast<uint64_t>(frame.id));
     if (it == msg_index_.end()) return out;
@@ -107,7 +109,8 @@ class dbc_engine {
     const auto* mux_sig = msg->MuxSignal();
 
     for (const auto& sig : msg->Signals()) {
-      if (sig.MultiplexerIndicator() == dbcppp::ISignal::EMultiplexer::MuxValue) {
+      if (sig.MultiplexerIndicator() ==
+          dbcppp::ISignal::EMultiplexer::MuxValue) {
         if (mux_sig) {
           auto mux_val = mux_sig->Decode(frame.data.data());
           if (mux_val != sig.MultiplexerSwitchValue()) continue;
@@ -179,4 +182,4 @@ class dbc_engine {
   std::string filename_;
 };
 
-}
+}  // namespace jcan

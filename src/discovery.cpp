@@ -154,10 +154,8 @@ static const known_vector_device* find_known_vector(int pid) {
       auto* vendor = find_known_vendor(vid);
       if (!vendor) continue;
 
-      // Skip devices already represented as serial SLCAN adapters
       if (find_known_serial(vid, pid)) continue;
 
-      // Skip if a SocketCAN interface exists backed by this USB device
       std::string usb_path = entry.path().filename().string();
       bool has_socketcan_for_device = false;
       for (const auto& net_entry : fs::directory_iterator(net_class)) {
@@ -172,7 +170,7 @@ static const known_vector_device* find_known_vector(int pid) {
       if (has_socketcan_for_device) continue;
 
 #ifdef JCAN_HAS_VECTOR
-      // Detect Vector CAN interfaces natively
+
       if (vid == 0x1248) {
         if (auto* vdev = find_known_vector(pid); vdev) {
           std::string product;

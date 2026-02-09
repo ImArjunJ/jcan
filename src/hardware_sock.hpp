@@ -29,7 +29,6 @@ struct socket_can {
   bool fd_enabled_{false};
   std::string iface_name_;
 
-  // Map slcan_bitrate enum to actual bitrate in bps for SocketCAN ip-link setup
   static constexpr uint32_t bitrate_bps(slcan_bitrate br) {
     constexpr uint32_t map[] = {
         10000, 20000, 50000, 100000, 125000, 250000, 500000, 800000, 1000000,
@@ -38,7 +37,6 @@ struct socket_can {
     return idx < sizeof(map) / sizeof(map[0]) ? map[idx] : 500000;
   }
 
-  // Check if a CAN interface is already UP via ioctl
   static bool iface_is_up(const std::string& name) {
     int s = ::socket(PF_CAN, SOCK_RAW, CAN_RAW);
     if (s < 0) return false;
@@ -50,7 +48,6 @@ struct socket_can {
     return up;
   }
 
-  // Run a command, retrying with sudo if it fails with EPERM-like exit
   static int run_elevated(const std::string& cmd) {
     int rc = ::system(cmd.c_str());
     if (rc != 0) {
@@ -65,8 +62,6 @@ struct socket_can {
                               [[maybe_unused]] unsigned baud = 0) {
     if (open_) return std::unexpected(error_code::already_open);
 
-    // If the interface isn't already UP, configure bitrate & bring it up.
-    // This requires CAP_NET_ADMIN — we try without sudo first, then with.
     if (!iface_is_up(iface_name)) {
       auto br = bitrate_bps(bitrate);
       auto cmd_down =
@@ -134,7 +129,7 @@ struct socket_can {
     ::close(fd_);
     fd_ = -1;
     open_ = false;
-    // Bring the interface down so it can be reconfigured on next open
+
     if (!iface_name_.empty()) {
       auto cmd = std::format("ip link set {} down 2>/dev/null", iface_name_);
       (void)run_elevated(cmd);

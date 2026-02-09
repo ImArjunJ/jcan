@@ -97,4 +97,4 @@ struct settings {
   }
 };
 
-}
+}  // namespace jcan

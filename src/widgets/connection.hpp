@@ -110,4 +110,4 @@ inline void draw_connection_modal(app_state& state) {
   ImGui::End();
 }
 
-}
+}  // namespace jcan::widgets

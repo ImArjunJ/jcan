@@ -65,4 +65,4 @@ struct mock_adapter {
   }
 };
 
-}
+}  // namespace jcan
