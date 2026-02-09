@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(jcan LANGUAGES C CXX)
+project(jcan LANGUAGES C CXX ASM)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -14,6 +14,13 @@ endif()
 option(JCAN_ENABLE_SOCKETCAN "Build with SocketCAN support (Linux only)" ${_SOCKETCAN_DEFAULT})
 
 find_package(OpenGL REQUIRED)
+
+# libusb for Vector VN1640A support
+find_package(PkgConfig)
+if(PkgConfig_FOUND)
+    pkg_check_modules(LIBUSB IMPORTED_TARGET libusb-1.0)
+endif()
+option(JCAN_ENABLE_VECTOR "Build with Vector VN1640A USB support" ${LIBUSB_FOUND})
 
 include(FetchContent)
 
@@ -152,6 +159,20 @@ target_link_libraries(jcan_core PUBLIC serialport)
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_compile_definitions(jcan_core PUBLIC JCAN_HAS_SOCKETCAN=1)
+endif()
+
+if(JCAN_ENABLE_VECTOR AND LIBUSB_FOUND)
+    # Embed VN1640A firmware blobs via .incbin assembly directive
+    set(JCAN_FW_MAIN_BIN "${CMAKE_CURRENT_SOURCE_DIR}/firmware/vn1640a_main_fw.bin")
+    set(JCAN_FW_FPGA_BIN "${CMAKE_CURRENT_SOURCE_DIR}/firmware/vn1640a_fpga.bin")
+    configure_file(
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/firmware_blobs.S.in
+        ${CMAKE_CURRENT_BINARY_DIR}/firmware_blobs.S
+        @ONLY
+    )
+    target_sources(jcan_core PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/firmware_blobs.S)
+    target_link_libraries(jcan_core PUBLIC PkgConfig::LIBUSB)
+    target_compile_definitions(jcan_core PUBLIC JCAN_HAS_VECTOR=1)
 endif()
 
 if(WIN32)

@@ -13,7 +13,10 @@
 #include <unistd.h>
 
 #include <cerrno>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <format>
 #include <optional>
 #include <string>
 #include <vector>
@@ -24,12 +27,70 @@ struct socket_can {
   int fd_{-1};
   bool open_{false};
   bool fd_enabled_{false};
+  std::string iface_name_;
 
-  [[nodiscard]] result<> open(
-      const std::string& iface_name,
-      [[maybe_unused]] slcan_bitrate bitrate = slcan_bitrate::s6,
-      [[maybe_unused]] unsigned baud = 0) {
+  // Map slcan_bitrate enum to actual bitrate in bps for SocketCAN ip-link setup
+  static constexpr uint32_t bitrate_bps(slcan_bitrate br) {
+    constexpr uint32_t map[] = {
+        10000, 20000, 50000, 100000, 125000, 250000, 500000, 800000, 1000000,
+    };
+    auto idx = static_cast<unsigned>(br);
+    return idx < sizeof(map) / sizeof(map[0]) ? map[idx] : 500000;
+  }
+
+  // Check if a CAN interface is already UP via ioctl
+  static bool iface_is_up(const std::string& name) {
+    int s = ::socket(PF_CAN, SOCK_RAW, CAN_RAW);
+    if (s < 0) return false;
+    struct ifreq ifr{};
+    std::strncpy(ifr.ifr_name, name.c_str(), IFNAMSIZ - 1);
+    bool up = false;
+    if (::ioctl(s, SIOCGIFFLAGS, &ifr) == 0) up = (ifr.ifr_flags & IFF_UP) != 0;
+    ::close(s);
+    return up;
+  }
+
+  // Run a command, retrying with sudo if it fails with EPERM-like exit
+  static int run_elevated(const std::string& cmd) {
+    int rc = ::system(cmd.c_str());
+    if (rc != 0) {
+      auto sudo_cmd = "sudo " + cmd;
+      rc = ::system(sudo_cmd.c_str());
+    }
+    return rc;
+  }
+
+  [[nodiscard]] result<> open(const std::string& iface_name,
+                              slcan_bitrate bitrate = slcan_bitrate::s6,
+                              [[maybe_unused]] unsigned baud = 0) {
     if (open_) return std::unexpected(error_code::already_open);
+
+    // If the interface isn't already UP, configure bitrate & bring it up.
+    // This requires CAP_NET_ADMIN — we try without sudo first, then with.
+    if (!iface_is_up(iface_name)) {
+      auto br = bitrate_bps(bitrate);
+      auto cmd_down =
+          std::format("ip link set {} down 2>/dev/null", iface_name);
+      auto cmd_type = std::format(
+          "ip link set {} type can bitrate {} 2>/dev/null", iface_name, br);
+      auto cmd_up = std::format("ip link set {} up 2>/dev/null", iface_name);
+
+      (void)run_elevated(cmd_down);
+      if (run_elevated(cmd_type) != 0) {
+        if (std::getenv("JCAN_DEBUG"))
+          std::fprintf(stderr,
+                       "[socketcan] set bitrate failed (may already be "
+                       "configured or vcan)\n");
+      }
+      if (run_elevated(cmd_up) != 0) {
+        if (std::getenv("JCAN_DEBUG"))
+          std::fprintf(stderr, "[socketcan] ip link set up failed\n");
+        return std::unexpected(error_code::port_config_failed);
+      }
+    } else if (std::getenv("JCAN_DEBUG")) {
+      std::fprintf(stderr, "[socketcan] %s already UP, skipping config\n",
+                   iface_name.c_str());
+    }
 
     fd_ = ::socket(PF_CAN, SOCK_RAW, CAN_RAW);
     if (fd_ < 0) return std::unexpected(error_code::socket_error);
@@ -46,20 +107,24 @@ struct socket_can {
     addr.can_family = AF_CAN;
     addr.can_ifindex = ifr.ifr_ifindex;
 
-    if (::bind(fd_, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) < 0) {
+    if (::bind(fd_, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) <
+        0) {
       ::close(fd_);
       fd_ = -1;
       return std::unexpected(error_code::socket_error);
     }
 
     can_err_mask_t err_mask = CAN_ERR_MASK;
-    ::setsockopt(fd_, SOL_CAN_RAW, CAN_RAW_ERR_FILTER, &err_mask, sizeof(err_mask));
+    ::setsockopt(fd_, SOL_CAN_RAW, CAN_RAW_ERR_FILTER, &err_mask,
+                 sizeof(err_mask));
 
     int canfd_on = 1;
-    if (::setsockopt(fd_, SOL_CAN_RAW, CAN_RAW_FD_FRAMES, &canfd_on, sizeof(canfd_on)) == 0) {
+    if (::setsockopt(fd_, SOL_CAN_RAW, CAN_RAW_FD_FRAMES, &canfd_on,
+                     sizeof(canfd_on)) == 0) {
       fd_enabled_ = true;
     }
 
+    iface_name_ = iface_name;
     open_ = true;
     return {};
   }
@@ -69,6 +134,12 @@ struct socket_can {
     ::close(fd_);
     fd_ = -1;
     open_ = false;
+    // Bring the interface down so it can be reconfigured on next open
+    if (!iface_name_.empty()) {
+      auto cmd = std::format("ip link set {} down 2>/dev/null", iface_name_);
+      (void)run_elevated(cmd);
+      iface_name_.clear();
+    }
     return {};
   }
 
@@ -98,14 +169,16 @@ struct socket_can {
     return {};
   }
 
-  [[nodiscard]] result<std::optional<can_frame>> recv(unsigned timeout_ms = 100) {
+  [[nodiscard]] result<std::optional<can_frame>> recv(
+      unsigned timeout_ms = 100) {
     auto batch = recv_many(timeout_ms);
     if (!batch) return std::unexpected(batch.error());
     if (batch->empty()) return std::optional<can_frame>{std::nullopt};
     return std::optional<can_frame>{batch->front()};
   }
 
-  [[nodiscard]] result<std::vector<can_frame>> recv_many(unsigned timeout_ms = 100) {
+  [[nodiscard]] result<std::vector<can_frame>> recv_many(
+      unsigned timeout_ms = 100) {
     if (!open_) return std::unexpected(error_code::not_open);
 
     std::vector<can_frame> frames;
@@ -143,7 +216,8 @@ struct socket_can {
           f.rtr = (cf->can_id & CAN_RTR_FLAG) != 0;
           f.error = (cf->can_id & CAN_ERR_FLAG) != 0;
           f.dlc = cf->can_dlc;
-          std::memcpy(f.data.data(), cf->data, std::min(f.dlc, static_cast<uint8_t>(8)));
+          std::memcpy(f.data.data(), cf->data,
+                      std::min(f.dlc, static_cast<uint8_t>(8)));
           frames.push_back(f);
         } else {
           break;
@@ -160,7 +234,8 @@ struct socket_can {
         f.rtr = (cf.can_id & CAN_RTR_FLAG) != 0;
         f.error = (cf.can_id & CAN_ERR_FLAG) != 0;
         f.dlc = cf.can_dlc;
-        std::memcpy(f.data.data(), cf.data, std::min(f.dlc, static_cast<uint8_t>(8)));
+        std::memcpy(f.data.data(), cf.data,
+                    std::min(f.dlc, static_cast<uint8_t>(8)));
         frames.push_back(f);
       }
 
@@ -172,22 +247,31 @@ struct socket_can {
   }
 };
 
-}
+}  // namespace jcan
 
 #else
 
 namespace jcan {
 
 struct socket_can {
-  [[nodiscard]] result<> open(const std::string&, slcan_bitrate = slcan_bitrate::s6, unsigned = 0) {
+  [[nodiscard]] result<> open(const std::string&,
+                              slcan_bitrate = slcan_bitrate::s6, unsigned = 0) {
     return std::unexpected(error_code::socket_error);
   }
-  [[nodiscard]] result<> close() { return std::unexpected(error_code::not_open); }
-  [[nodiscard]] result<> send(const can_frame&) { return std::unexpected(error_code::not_open); }
-  [[nodiscard]] result<std::optional<can_frame>> recv(unsigned = 100) { return std::unexpected(error_code::not_open); }
-  [[nodiscard]] result<std::vector<can_frame>> recv_many(unsigned = 100) { return std::unexpected(error_code::not_open); }
+  [[nodiscard]] result<> close() {
+    return std::unexpected(error_code::not_open);
+  }
+  [[nodiscard]] result<> send(const can_frame&) {
+    return std::unexpected(error_code::not_open);
+  }
+  [[nodiscard]] result<std::optional<can_frame>> recv(unsigned = 100) {
+    return std::unexpected(error_code::not_open);
+  }
+  [[nodiscard]] result<std::vector<can_frame>> recv_many(unsigned = 100) {
+    return std::unexpected(error_code::not_open);
+  }
 };
 
-}
+}  // namespace jcan
 
 #endif

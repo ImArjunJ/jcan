@@ -5,3 +5,4 @@ imgui.ini
 *.d
 compile_commands.json
 *.markdown
+ref/

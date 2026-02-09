@@ -10,6 +10,77 @@
 
 namespace jcan {
 
+struct known_usb_id {
+  int vid;
+  int pid;
+  const char* label;
+  bool slcan_capable;
+};
+
+static constexpr known_usb_id k_known_serial_can[] = {
+    {0x0403, 0x6015, "CANdapter (FTDI FT240X)", true},
+    {0x0403, 0x6001, "Lawicel CANUSB (FTDI)", true},
+    {0x0403, 0x6014, "FTDI FT232H CAN", true},
+    {0x0483, 0x5740, "CANable / STM32 CDC", true},
+    {0x1D50, 0x606F, "CANtact", true},
+    {0x16D0, 0x117E, "USBtin", true},
+    {0x04D8, 0x000A, "Microchip CAN", true},
+    {0x1CBE, 0x00FD, "TI TCAN", true},
+};
+
+struct known_usb_vendor {
+  int vid;
+  const char* vendor;
+  const char* hint;
+};
+
+static constexpr known_usb_vendor k_known_can_vendors[] = {
+    {0x0403, "FTDI", nullptr},
+    {0x0483, "STMicro", nullptr},
+    {0x1D50, "OpenMoko", nullptr},
+#ifdef JCAN_HAS_VECTOR
+    {0x1248, "Vector", nullptr},
+#else
+    {0x1248, "Vector", "rebuild jcan with libusb for native Vector support"},
+#endif
+    {0x0C72, "PEAK-System", "install peak linux driver (peak_usb module)"},
+    {0x0BFD, "Kvaser", "run: sudo modprobe kvaser_usb"},
+    {0x12D6, "EMS Wuensche", "install ems_usb kernel module"},
+    {0x1CBE, "Texas Instruments", nullptr},
+};
+
+static const known_usb_id* find_known_serial(int vid, int pid) {
+  for (const auto& e : k_known_serial_can)
+    if (e.vid == vid && e.pid == pid) return &e;
+  return nullptr;
+}
+
+static const known_usb_vendor* find_known_vendor(int vid) {
+  for (const auto& e : k_known_can_vendors)
+    if (e.vid == vid) return &e;
+  return nullptr;
+}
+
+#ifdef JCAN_HAS_VECTOR
+struct known_vector_device {
+  int pid;
+  const char* label;
+  int num_channels;
+};
+
+static constexpr known_vector_device k_known_vector[] = {
+    {0x1073, "VN1640A", 4},
+    {0x1072, "VN1630A", 2},
+    {0x1074, "VN1610", 2},
+};
+
+static const known_vector_device* find_known_vector(int pid) {
+  for (const auto& e : k_known_vector)
+    if (e.pid == pid) return &e;
+  return nullptr;
+}
+#endif
+
 [[nodiscard]] std::vector<device_descriptor> discover_adapters() {
   std::vector<device_descriptor> out;
 
@@ -18,16 +89,15 @@ namespace jcan {
     for (int i = 0; port_list[i]; ++i) {
       struct sp_port* p = port_list[i];
       int vid = 0, pid = 0;
-      if (sp_get_port_usb_vid_pid(p, &vid, &pid) == SP_OK) {
-        if (vid == 0x0403 && pid == 0x6015) {
-          device_descriptor d;
-          d.kind = adapter_kind::serial_slcan;
-          d.port = sp_get_port_name(p);
-          const char* desc = sp_get_port_description(p);
-          d.friendly_name = std::format("{} (FTDI {:04X}:{:04X})",
-                                        desc ? desc : d.port, vid, pid);
-          out.push_back(std::move(d));
-        }
+      if (sp_get_port_usb_vid_pid(p, &vid, &pid) != SP_OK) continue;
+      if (auto* known = find_known_serial(vid, pid); known) {
+        device_descriptor d;
+        d.kind = adapter_kind::serial_slcan;
+        d.port = sp_get_port_name(p);
+        const char* desc = sp_get_port_description(p);
+        d.friendly_name =
+            std::format("{} ({})", desc ? desc : d.port, known->label);
+        out.push_back(std::move(d));
       }
     }
     sp_free_port_list(port_list);
@@ -52,6 +122,97 @@ namespace jcan {
       }
     }
   }
+
+  const fs::path usb_devices{"/sys/bus/usb/devices"};
+  if (fs::exists(usb_devices)) {
+    for (const auto& entry : fs::directory_iterator(usb_devices)) {
+      auto vid_path = entry.path() / "idVendor";
+      auto pid_path = entry.path() / "idProduct";
+      if (!fs::exists(vid_path) || !fs::exists(pid_path)) continue;
+
+      std::string vid_str, pid_str;
+      {
+        std::ifstream f(vid_path);
+        std::getline(f, vid_str);
+      }
+      {
+        std::ifstream f(pid_path);
+        std::getline(f, pid_str);
+      }
+      int vid = 0, pid = 0;
+      try {
+        vid = std::stoi(vid_str, nullptr, 16);
+      } catch (...) {
+        continue;
+      }
+      try {
+        pid = std::stoi(pid_str, nullptr, 16);
+      } catch (...) {
+        continue;
+      }
+
+      auto* vendor = find_known_vendor(vid);
+      if (!vendor) continue;
+
+      // Skip devices already represented as serial SLCAN adapters
+      if (find_known_serial(vid, pid)) continue;
+
+      // Skip if a SocketCAN interface exists backed by this USB device
+      std::string usb_path = entry.path().filename().string();
+      bool has_socketcan_for_device = false;
+      for (const auto& net_entry : fs::directory_iterator(net_class)) {
+        auto dev_link = net_entry.path() / "device";
+        if (!fs::is_symlink(dev_link)) continue;
+        auto target = fs::read_symlink(dev_link).string();
+        if (target.find(usb_path) != std::string::npos) {
+          has_socketcan_for_device = true;
+          break;
+        }
+      }
+      if (has_socketcan_for_device) continue;
+
+#ifdef JCAN_HAS_VECTOR
+      // Detect Vector CAN interfaces natively
+      if (vid == 0x1248) {
+        if (auto* vdev = find_known_vector(pid); vdev) {
+          std::string product;
+          auto prod_path = entry.path() / "product";
+          if (fs::exists(prod_path)) {
+            std::ifstream f(prod_path);
+            std::getline(f, product);
+          }
+          if (product.empty()) product = vdev->label;
+
+          std::string usb_path = entry.path().filename().string();
+          for (int ch = 0; ch < vdev->num_channels; ++ch) {
+            device_descriptor d;
+            d.kind = adapter_kind::vector_xl;
+            d.port = std::format("{}:{}", usb_path, ch);
+            d.friendly_name = std::format("Vector {} CH{} ({:04X}:{:04X})",
+                                          product, ch + 1, vid, pid);
+            out.push_back(std::move(d));
+          }
+          continue;
+        }
+      }
+#endif
+
+      std::string product;
+      auto prod_path = entry.path() / "product";
+      if (fs::exists(prod_path)) {
+        std::ifstream f(prod_path);
+        std::getline(f, product);
+      }
+      if (product.empty()) product = vendor->vendor;
+
+      device_descriptor d;
+      d.kind = adapter_kind::unbound;
+      d.port = entry.path().filename().string();
+      d.friendly_name = std::format("{} ({:04X}:{:04X})", product, vid, pid);
+      if (vendor->hint) d.friendly_name += std::format(" - {}", vendor->hint);
+      out.push_back(std::move(d));
+    }
+  }
 #endif
 
   out.push_back(device_descriptor{
@@ -63,4 +224,4 @@ namespace jcan {
   return out;
 }
 
-}
+}  // namespace jcan

@@ -218,6 +218,11 @@ struct app_state {
     if (devices.empty()) return;
     const auto& desc = devices[static_cast<std::size_t>(selected_device)];
 
+    if (desc.kind == adapter_kind::unbound) {
+      status_text = std::format("No driver loaded for {}", desc.friendly_name);
+      return;
+    }
+
     for (const auto& slot : adapter_slots) {
       if (slot->desc.port == desc.port) {
         status_text = std::format("Already connected: {}", desc.port);

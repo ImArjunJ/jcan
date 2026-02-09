@@ -23,7 +23,8 @@ struct can_frame {
 };
 
 [[nodiscard]] constexpr uint8_t dlc_to_len(uint8_t dlc) noexcept {
-  constexpr uint8_t map[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 12, 16, 20, 24, 32, 48, 64};
+  constexpr uint8_t map[] = {0, 1,  2,  3,  4,  5,  6,  7,
+                             8, 12, 16, 20, 24, 32, 48, 64};
   return (dlc < 16) ? map[dlc] : 64;
 }
 
@@ -61,20 +62,34 @@ enum class error_code : uint8_t {
 
 [[nodiscard]] constexpr const char* to_string(error_code ec) noexcept {
   switch (ec) {
-    case error_code::ok:                 return "ok";
-    case error_code::port_not_found:     return "port_not_found";
-    case error_code::port_open_failed:   return "port_open_failed";
-    case error_code::port_config_failed: return "port_config_failed";
-    case error_code::permission_denied:  return "permission_denied";
-    case error_code::write_error:        return "write_error";
-    case error_code::read_error:         return "read_error";
-    case error_code::read_timeout:       return "read_timeout";
-    case error_code::frame_parse_error:  return "frame_parse_error";
-    case error_code::socket_error:       return "socket_error";
-    case error_code::interface_not_found:return "interface_not_found";
-    case error_code::already_open:       return "already_open";
-    case error_code::not_open:           return "not_open";
-    case error_code::unknown:            return "unknown";
+    case error_code::ok:
+      return "ok";
+    case error_code::port_not_found:
+      return "port_not_found";
+    case error_code::port_open_failed:
+      return "port_open_failed";
+    case error_code::port_config_failed:
+      return "port_config_failed";
+    case error_code::permission_denied:
+      return "permission_denied";
+    case error_code::write_error:
+      return "write_error";
+    case error_code::read_error:
+      return "read_error";
+    case error_code::read_timeout:
+      return "read_timeout";
+    case error_code::frame_parse_error:
+      return "frame_parse_error";
+    case error_code::socket_error:
+      return "socket_error";
+    case error_code::interface_not_found:
+      return "interface_not_found";
+    case error_code::already_open:
+      return "already_open";
+    case error_code::not_open:
+      return "not_open";
+    case error_code::unknown:
+      return "unknown";
   }
   return "?";
 }
@@ -85,7 +100,9 @@ using result = std::expected<T, error_code>;
 enum class adapter_kind : uint8_t {
   serial_slcan,
   socket_can,
+  vector_xl,
   mock,
+  unbound,
 };
 
 struct device_descriptor {
@@ -95,8 +112,15 @@ struct device_descriptor {
 };
 
 enum class slcan_bitrate : uint8_t {
-  s0 = 0, s1 = 1, s2 = 2, s3 = 3, s4 = 4,
-  s5 = 5, s6 = 6, s7 = 7, s8 = 8,
+  s0 = 0,
+  s1 = 1,
+  s2 = 2,
+  s3 = 3,
+  s4 = 4,
+  s5 = 5,
+  s6 = 6,
+  s7 = 7,
+  s8 = 8,
 };
 
 }  // namespace jcan

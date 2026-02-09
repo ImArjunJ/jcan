@@ -7,11 +7,18 @@
 #include "hardware_mock.hpp"
 #include "hardware_slcan.hpp"
 #include "hardware_sock.hpp"
+#ifdef JCAN_HAS_VECTOR
+#include "hardware_vector.hpp"
+#endif
 #include "types.hpp"
 
 namespace jcan {
 
-using adapter = std::variant<serial_slcan, socket_can, mock_adapter>;
+using adapter = std::variant<serial_slcan, socket_can,
+#ifdef JCAN_HAS_VECTOR
+                             vector_xl,
+#endif
+                             mock_adapter>;
 
 [[nodiscard]] inline result<> adapter_open(
     adapter& a, const std::string& port,
@@ -33,7 +40,8 @@ using adapter = std::variant<serial_slcan, socket_can, mock_adapter>;
   return std::visit(
       [&](auto& drv) -> result<std::optional<can_frame>> {
         return drv.recv(timeout_ms);
-      }, a);
+      },
+      a);
 }
 
 [[nodiscard]] inline result<std::vector<can_frame>> adapter_recv_many(
@@ -41,16 +49,26 @@ using adapter = std::variant<serial_slcan, socket_can, mock_adapter>;
   return std::visit(
       [&](auto& drv) -> result<std::vector<can_frame>> {
         return drv.recv_many(timeout_ms);
-      }, a);
+      },
+      a);
 }
 
 [[nodiscard]] inline adapter make_adapter(const device_descriptor& desc) {
   switch (desc.kind) {
-    case adapter_kind::serial_slcan: return serial_slcan{};
-    case adapter_kind::socket_can:   return socket_can{};
-    case adapter_kind::mock:         return mock_adapter{};
+    case adapter_kind::serial_slcan:
+      return serial_slcan{};
+    case adapter_kind::socket_can:
+      return socket_can{};
+#ifdef JCAN_HAS_VECTOR
+    case adapter_kind::vector_xl:
+      return vector_xl{};
+#endif
+    case adapter_kind::mock:
+      return mock_adapter{};
+    case adapter_kind::unbound:
+      return mock_adapter{};
   }
   return mock_adapter{};
 }
 
-}
+}  // namespace jcan

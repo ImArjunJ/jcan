@@ -1,0 +1,21 @@
+/* VN1640A firmware blobs — embedded via .incbin at build time.
+ * Extracted from Vector vn1640.sys driver.
+ * These are proprietary firmware images required to initialize the VN1640A
+ * hardware which starts in bootloader mode on every USB connect.
+ */
+
+    .section .rodata
+
+    .global vn1640a_fw_data
+    .global vn1640a_fw_data_end
+    .balign 16
+vn1640a_fw_data:
+    .incbin "@JCAN_FW_MAIN_BIN@"
+vn1640a_fw_data_end:
+
+    .global vn1640a_fpga_data
+    .global vn1640a_fpga_data_end
+    .balign 16
+vn1640a_fpga_data:
+    .incbin "@JCAN_FW_FPGA_BIN@"
+vn1640a_fpga_data_end:
