@@ -82,6 +82,10 @@ target_include_directories(serialport PUBLIC ${libserialport_SOURCE_DIR})
 target_include_directories(serialport PRIVATE ${_sp_config_dir})
 target_compile_definitions(serialport PRIVATE LIBSERIALPORT_ATBUILD)
 if(WIN32)
+target_compile_definitions(serialport PRIVATE LIBSERIALPORT_MSBUILD) 
+target_compile_definitions(serialport PRIVATE strdup=_strdup) 
+endif()
+if(WIN32)
     target_link_libraries(serialport PRIVATE cfgmgr32 setupapi)
 elseif(APPLE)
     target_link_libraries(serialport PRIVATE "-framework IOKit" "-framework CoreFoundation")
@@ -106,6 +110,10 @@ FetchContent_Declare(
     GIT_SUBMODULES "third-party/boost"
 )
 FetchContent_MakeAvailable(dbcppp)
+
+if(TARGET dbcppp AND WIN32)
+target_compile_definitions(dbcppp PRIVATE DBCPPP_EXPORT)
+endif()
 
 FetchContent_Declare(
     nfd
