@@ -36,6 +36,11 @@ FetchContent_Declare(
 FetchContent_GetProperties(libserialport)
 if(NOT libserialport_POPULATED)
     FetchContent_Populate(libserialport)
+    
+    set(_lsp_header "${libserialport_SOURCE_DIR}/libserialport.h")
+    file(READ "${_lsp_header}" _lsp_content)
+    string(REPLACE "#ifdef _MSC_VER" "#if defined(_MSC_VER) && !defined(SP_STATIC)" _lsp_content "${_lsp_content}")
+    file(WRITE "${_lsp_header}" "${_lsp_content}")
 endif()
 
 set(SERIALPORT_SOURCES
@@ -80,6 +85,7 @@ file(WRITE "${_sp_config_dir}/config.h" "${_sp_cfg}")
 add_library(serialport STATIC ${SERIALPORT_SOURCES})
 target_include_directories(serialport PUBLIC ${libserialport_SOURCE_DIR})
 target_include_directories(serialport PRIVATE ${_sp_config_dir})
+target_compile_definitions(serialport PUBLIC SP_STATIC)
 target_compile_definitions(serialport PRIVATE LIBSERIALPORT_ATBUILD)
 if(WIN32)
 target_compile_definitions(serialport PRIVATE LIBSERIALPORT_MSBUILD) 
