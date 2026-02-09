@@ -29,30 +29,62 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(glfw)
 
-find_package(PkgConfig QUIET)
-if(PkgConfig_FOUND)
-    pkg_check_modules(SERIALPORT IMPORTED_TARGET libserialport)
+FetchContent_Declare(
+    libserialport
+    URL https://sigrok.org/download/source/libserialport/libserialport-0.1.2.tar.gz
+)
+FetchContent_GetProperties(libserialport)
+if(NOT libserialport_POPULATED)
+    FetchContent_Populate(libserialport)
 endif()
-if(TARGET PkgConfig::SERIALPORT)
-    add_library(serialport ALIAS PkgConfig::SERIALPORT)
-else()
-    find_path(SERIALPORT_INCLUDE_DIR libserialport.h)
-    find_library(SERIALPORT_LIBRARY NAMES serialport libserialport)
-    if(SERIALPORT_INCLUDE_DIR AND SERIALPORT_LIBRARY)
-        add_library(serialport UNKNOWN IMPORTED)
-        set_target_properties(serialport PROPERTIES
-            IMPORTED_LOCATION "${SERIALPORT_LIBRARY}"
-            INTERFACE_INCLUDE_DIRECTORIES "${SERIALPORT_INCLUDE_DIR}"
-        )
-    else()
-        message(FATAL_ERROR
-            "libserialport not found.\n"
-            "  arch:   pacman -S libserialport\n"
-            "  debian: apt install libserialport-dev\n"
-            "  brew:   brew install libserialport\n"
-            "  win:    vcpkg install libserialport\n"
-            "Or set -DSERIALPORT_INCLUDE_DIR=... -DSERIALPORT_LIBRARY=...")
-    endif()
+
+set(SERIALPORT_SOURCES
+    ${libserialport_SOURCE_DIR}/serialport.c
+    ${libserialport_SOURCE_DIR}/timing.c
+)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    list(APPEND SERIALPORT_SOURCES
+        ${libserialport_SOURCE_DIR}/linux.c
+        ${libserialport_SOURCE_DIR}/linux_termios.c
+    )
+elseif(WIN32)
+    list(APPEND SERIALPORT_SOURCES ${libserialport_SOURCE_DIR}/windows.c)
+elseif(APPLE)
+    list(APPEND SERIALPORT_SOURCES ${libserialport_SOURCE_DIR}/macosx.c)
+elseif(CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
+    list(APPEND SERIALPORT_SOURCES ${libserialport_SOURCE_DIR}/freebsd.c)
+endif()
+
+set(_sp_config_dir "${CMAKE_CURRENT_BINARY_DIR}/sp_config")
+file(MAKE_DIRECTORY "${_sp_config_dir}")
+set(_sp_cfg "")
+string(APPEND _sp_cfg "#define SP_PRIV\n#define SP_API\n")
+if(UNIX)
+    string(APPEND _sp_cfg "#define HAVE_SYS_FILE_H 1\n")
+    string(APPEND _sp_cfg "#define HAVE_FLOCK 1\n")
+    string(APPEND _sp_cfg "#define HAVE_CLOCK_GETTIME 1\n")
+    string(APPEND _sp_cfg "#define HAVE_REALPATH 1\n")
+endif()
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    string(APPEND _sp_cfg "#define HAVE_STRUCT_TERMIOS2 1\n")
+    string(APPEND _sp_cfg "#define HAVE_STRUCT_TERMIOS_C_ISPEED 0\n")
+    string(APPEND _sp_cfg "#define HAVE_STRUCT_TERMIOS_C_OSPEED 0\n")
+    string(APPEND _sp_cfg "#define HAVE_STRUCT_TERMIOS2_C_ISPEED 1\n")
+    string(APPEND _sp_cfg "#define HAVE_STRUCT_TERMIOS2_C_OSPEED 1\n")
+    string(APPEND _sp_cfg "#define HAVE_DECL_BOTHER 1\n")
+    string(APPEND _sp_cfg "#define HAVE_TERMIOS2_SPEED 1\n")
+    string(APPEND _sp_cfg "#define HAVE_STRUCT_SERIAL_STRUCT 1\n")
+endif()
+file(WRITE "${_sp_config_dir}/config.h" "${_sp_cfg}")
+
+add_library(serialport STATIC ${SERIALPORT_SOURCES})
+target_include_directories(serialport PUBLIC ${libserialport_SOURCE_DIR})
+target_include_directories(serialport PRIVATE ${_sp_config_dir})
+target_compile_definitions(serialport PRIVATE LIBSERIALPORT_ATBUILD)
+if(WIN32)
+    target_link_libraries(serialport PRIVATE cfgmgr32 setupapi)
+elseif(APPLE)
+    target_link_libraries(serialport PRIVATE "-framework IOKit" "-framework CoreFoundation")
 endif()
 
 FetchContent_Declare(
