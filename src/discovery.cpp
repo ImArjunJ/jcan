@@ -8,6 +8,10 @@
 #include <fstream>
 #include <string>
 
+#ifdef JCAN_HAS_KVASER
+#include "hardware_kvaser.hpp"
+#endif
+
 namespace jcan {
 
 struct known_usb_id {
@@ -44,7 +48,11 @@ static constexpr known_usb_vendor k_known_can_vendors[] = {
     {0x1248, "Vector", "rebuild jcan with libusb for native Vector support"},
 #endif
     {0x0C72, "PEAK-System", "install peak linux driver (peak_usb module)"},
+#ifdef JCAN_HAS_KVASER
+    {0x0BFD, "Kvaser", nullptr},
+#else
     {0x0BFD, "Kvaser", "run: sudo modprobe kvaser_usb"},
+#endif
     {0x12D6, "EMS Wuensche", "install ems_usb kernel module"},
     {0x1CBE, "Texas Instruments", nullptr},
 };
@@ -192,6 +200,35 @@ static const known_vector_device* find_known_vector(int pid) {
           }
           continue;
         }
+      }
+#endif
+
+#ifdef JCAN_HAS_KVASER
+      if (vid == 0x0BFD) {
+        std::string product;
+        auto prod_path = entry.path() / "product";
+        if (fs::exists(prod_path)) {
+          std::ifstream f(prod_path);
+          std::getline(f, product);
+        }
+        if (product.empty()) product = "Kvaser";
+
+        uint8_t channels = 1;
+        auto* kp = kvaser::find_any(static_cast<uint16_t>(pid));
+        if (kp) {
+          if (product.empty() || product == "Kvaser") product = kp->name;
+          channels = kp->channels;
+        }
+
+        for (uint8_t ch = 0; ch < channels; ++ch) {
+          device_descriptor d;
+          d.kind = adapter_kind::kvaser_usb;
+          d.port = std::format("{}:{}", pid, ch);
+          d.friendly_name = std::format("Kvaser {} CH{} ({:04X}:{:04X})",
+                                        product, ch + 1, vid, pid);
+          out.push_back(std::move(d));
+        }
+        continue;
       }
 #endif
 

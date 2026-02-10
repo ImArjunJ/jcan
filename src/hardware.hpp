@@ -10,6 +10,9 @@
 #ifdef JCAN_HAS_VECTOR
 #include "hardware_vector.hpp"
 #endif
+#ifdef JCAN_HAS_KVASER
+#include "hardware_kvaser.hpp"
+#endif
 #include "types.hpp"
 
 namespace jcan {
@@ -17,6 +20,9 @@ namespace jcan {
 using adapter = std::variant<serial_slcan, socket_can,
 #ifdef JCAN_HAS_VECTOR
                              vector_xl,
+#endif
+#ifdef JCAN_HAS_KVASER
+                             kvaser_usb,
 #endif
                              mock_adapter>;
 
@@ -62,6 +68,10 @@ using adapter = std::variant<serial_slcan, socket_can,
 #ifdef JCAN_HAS_VECTOR
     case adapter_kind::vector_xl:
       return vector_xl{};
+#endif
+#ifdef JCAN_HAS_KVASER
+    case adapter_kind::kvaser_usb:
+      return kvaser_usb{};
 #endif
     case adapter_kind::mock:
       return mock_adapter{};

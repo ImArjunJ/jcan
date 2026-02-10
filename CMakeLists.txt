@@ -173,6 +173,7 @@ if(JCAN_ENABLE_VECTOR AND LIBUSB_FOUND)
     target_sources(jcan_core PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/firmware_blobs.S)
     target_link_libraries(jcan_core PUBLIC PkgConfig::LIBUSB)
     target_compile_definitions(jcan_core PUBLIC JCAN_HAS_VECTOR=1)
+    target_compile_definitions(jcan_core PUBLIC JCAN_HAS_KVASER=1)
 endif()
 
 if(WIN32)

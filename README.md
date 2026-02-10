@@ -61,6 +61,8 @@ the firmware blobs are embedded directly into the binary via gas `.incbin`.
 | adapter                            | interface      | notes                                                  |
 | ---------------------------------- | -------------- | ------------------------------------------------------ |
 | vector vn1640a                     | usb (libusb)   | reverse-engineered, see above                          |
+| kvaser leaf                        | usb (libusb)   | cross-platform, ported from linuxcan gpl source        |
+| kvaser mhydra (memorator pro, etc) | usb (libusb)   | hydra protocol, cross-platform, 30 device PIDs         |
 | kvaser (any socketcan-supported)   | socketcan      | auto-configures bitrate and link state, sudo elevation |
 | canadapter / cantact / candlelight | slcan (serial) | ascii protocol over usb-serial                         |
 | any socketcan device               | socketcan      | `can0`, `vcan0`, etc.                                  |

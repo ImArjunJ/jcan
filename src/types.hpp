@@ -101,6 +101,7 @@ enum class adapter_kind : uint8_t {
   serial_slcan,
   socket_can,
   vector_xl,
+  kvaser_usb,
   mock,
   unbound,
 };
