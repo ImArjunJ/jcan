@@ -17,6 +17,7 @@ struct can_frame {
   std::array<uint8_t, 64> data{};
   bool fd{false};
   bool brs{false};
+  uint8_t source{0xff};
 
   using clock = std::chrono::steady_clock;
   clock::time_point timestamp{};

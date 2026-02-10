@@ -124,10 +124,13 @@ inline void draw_monitor_live(app_state& state) {
                            ImGuiTableFlags_SizingStretchProp;
 
     const bool have_dbc = state.dbc.loaded();
-    const int col_count = have_dbc ? 8 : 6;
+    const int col_count = have_dbc ? 9 : 7;
 
     if (ImGui::BeginTable("##live_table", col_count, flags)) {
       ImGui::TableSetupScrollFreeze(0, 1);
+      ImGui::TableSetupColumn(
+          "Ch", ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_NoSort,
+          25);
       ImGui::TableSetupColumn(
           "ID",
           ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultSort,
@@ -138,8 +141,9 @@ inline void draw_monitor_live(app_state& state) {
       ImGui::TableSetupColumn(
           "DLC",
           ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_NoSort, 35);
-      ImGui::TableSetupColumn("Data", ImGuiTableColumnFlags_WidthStretch |
-                                          ImGuiTableColumnFlags_NoSort);
+      ImGui::TableSetupColumn(
+          "Data",
+          ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_NoSort, 190);
       if (have_dbc) {
         ImGui::TableSetupColumn(
             "Message",
@@ -167,8 +171,8 @@ inline void draw_monitor_live(app_state& state) {
         sorted.push_back({i, row.frame.id, row.count, row.dt_ms});
       }
 
-      int count_col = have_dbc ? 6 : 4;
-      int dt_col = have_dbc ? 7 : 5;
+      int count_col = have_dbc ? 7 : 5;
+      int dt_col = have_dbc ? 8 : 6;
       if (auto* specs = ImGui::TableGetSortSpecs()) {
         int col = 0;
         auto dir = ImGuiSortDirection_Ascending;
@@ -179,7 +183,7 @@ inline void draw_monitor_live(app_state& state) {
         std::sort(sorted.begin(), sorted.end(),
                   [&](const sort_row& a, const sort_row& b) {
                     bool less;
-                    if (col == 0)
+                    if (col == 1)
                       less = a.id < b.id;
                     else if (col == count_col)
                       less = a.count < b.count;
@@ -215,6 +219,11 @@ inline void draw_monitor_live(app_state& state) {
               ImGuiTableBgTarget_RowBg1,
               ImGui::GetColorU32(ImVec4(0.2f, 0.4f, 0.1f, 0.4f)));
         }
+        ImGui::TableNextColumn();
+        if (row.frame.source == 0xff)
+          ImGui::TextDisabled("R");
+        else
+          ImGui::Text("%u", row.frame.source);
         ImGui::TableNextColumn();
         if (state.mono_font) ImGui::PushFont(state.mono_font);
         ImGui::TextUnformatted(id_str.c_str());
@@ -263,7 +272,7 @@ inline void draw_monitor_live(app_state& state) {
             sig_str += std::format("{}={:.2f}{}", decoded[si].name,
                                    decoded[si].value, decoded[si].unit);
           }
-          ImGui::TextUnformatted(sig_str.c_str());
+          ImGui::TextWrapped("%s", sig_str.c_str());
         }
 
         ImGui::TableNextColumn();
@@ -303,9 +312,10 @@ inline void draw_monitor_scrollback(app_state& state) {
                            ImGuiTableFlags_ScrollY |
                            ImGuiTableFlags_SizingStretchProp;
 
-    if (ImGui::BeginTable("##scroll_table", 5, flags)) {
+    if (ImGui::BeginTable("##scroll_table", 6, flags)) {
       ImGui::TableSetupScrollFreeze(0, 1);
       ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, 60);
+      ImGui::TableSetupColumn("Ch", ImGuiTableColumnFlags_WidthFixed, 25);
       ImGui::TableSetupColumn("ID", ImGuiTableColumnFlags_WidthFixed, 80);
       ImGui::TableSetupColumn("DLC", ImGuiTableColumnFlags_WidthFixed, 35);
       ImGui::TableSetupColumn("Data", ImGuiTableColumnFlags_WidthStretch);
@@ -337,6 +347,11 @@ inline void draw_monitor_scrollback(app_state& state) {
           ImGui::TableNextRow();
           ImGui::TableNextColumn();
           ImGui::Text("%d", i);
+          ImGui::TableNextColumn();
+          if (f.source == 0xff)
+            ImGui::TextDisabled("R");
+          else
+            ImGui::Text("%u", f.source);
           ImGui::TableNextColumn();
           if (state.mono_font) ImGui::PushFont(state.mono_font);
           if (f.extended)

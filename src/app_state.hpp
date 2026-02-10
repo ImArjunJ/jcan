@@ -307,8 +307,9 @@ struct app_state {
 
   void poll_frames() {
     std::vector<can_frame> frames;
-    for (auto& slot : adapter_slots) {
-      auto slot_frames = slot->rx_buf.drain();
+    for (std::size_t si = 0; si < adapter_slots.size(); ++si) {
+      auto slot_frames = adapter_slots[si]->rx_buf.drain();
+      for (auto& f : slot_frames) f.source = static_cast<uint8_t>(si);
       frames.insert(frames.end(), slot_frames.begin(), slot_frames.end());
     }
     auto replay_frames = replay_buf.drain();
@@ -335,7 +336,8 @@ struct app_state {
       if (!monitor_freeze) {
         bool found = false;
         for (auto& row : monitor_rows) {
-          if (row.frame.id == f.id && row.frame.extended == f.extended) {
+          if (row.frame.id == f.id && row.frame.extended == f.extended &&
+              row.frame.source == f.source) {
             auto dt = f.timestamp - row.frame.timestamp;
             row.dt_ms = std::chrono::duration<float, std::milli>(dt).count();
             row.frame = f;
