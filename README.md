@@ -99,7 +99,7 @@ conditional features:
 
 - [ ] make precompiled binaries for all platforms
 - [ ] ensure compilation on all platforms
-- [ ] debug sending messages on vector and kvaser
+- [ ] debug sending messages on vector
 - [ ] add sdk / scripting lang to be able to send messages
 - [ ] add custom views (to prevent single-use scripts)
 
