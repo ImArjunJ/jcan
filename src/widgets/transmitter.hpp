@@ -85,28 +85,18 @@ inline void draw_transmitter(app_state& state) {
       auto mid = msg_ids[selected_idx];
       auto name = state.dbc.message_name(mid);
 
-      bool exists = false;
-      state.tx_sched.with_jobs([&](auto& jobs) {
-        for (auto& j : jobs)
-          if (j.msg_id == mid && !j.is_raw) {
-            exists = true;
-            break;
-          }
-      });
-
-      if (!exists) {
-        tx_job job;
-        job.msg_id = mid;
-        job.msg_name = name;
-        job.is_raw = false;
-        job.frame.id = mid;
-        job.frame.extended = (mid > 0x7FF);
-        job.frame.dlc = state.dbc.message_dlc(mid);
-        std::memset(job.frame.data.data(), 0, 64);
-        auto sigs = state.dbc.signal_infos(mid);
-        for (const auto& si : sigs) job.signal_values[si.name] = 0.0;
-        state.tx_sched.upsert(std::move(job));
-      }
+      tx_job job;
+      job.instance_id = tx_job::next_id();
+      job.msg_id = mid;
+      job.msg_name = name;
+      job.is_raw = false;
+      job.frame.id = mid;
+      job.frame.extended = (mid > 0x7FF);
+      job.frame.dlc = state.dbc.message_dlc(mid);
+      std::memset(job.frame.data.data(), 0, 64);
+      auto sigs = state.dbc.signal_infos(mid);
+      for (const auto& si : sigs) job.signal_values[si.name] = 0.0;
+      state.tx_sched.upsert(std::move(job));
     }
     ImGui::SameLine();
   }
@@ -118,26 +108,16 @@ inline void draw_transmitter(app_state& state) {
     if (ImGui::Button("Add Custom")) {
       uint32_t key = custom_id | 0x80000000u;
 
-      bool exists = false;
-      state.tx_sched.with_jobs([&](auto& jobs) {
-        for (auto& j : jobs)
-          if (j.msg_id == key) {
-            exists = true;
-            break;
-          }
-      });
-
-      if (!exists) {
-        tx_job job;
-        job.msg_id = key;
-        job.msg_name = std::format("Custom 0x{:03X}", custom_id);
-        job.is_raw = true;
-        job.frame.id = custom_id;
-        job.frame.extended = (custom_id > 0x7FF);
-        job.frame.dlc = static_cast<uint8_t>(custom_dlc);
-        std::memset(job.frame.data.data(), 0, 64);
-        state.tx_sched.upsert(std::move(job));
-      }
+      tx_job job;
+      job.instance_id = tx_job::next_id();
+      job.msg_id = key;
+      job.msg_name = std::format("Custom 0x{:03X}", custom_id);
+      job.is_raw = true;
+      job.frame.id = custom_id;
+      job.frame.extended = (custom_id > 0x7FF);
+      job.frame.dlc = static_cast<uint8_t>(custom_dlc);
+      std::memset(job.frame.data.data(), 0, 64);
+      state.tx_sched.upsert(std::move(job));
     }
     ImGui::SameLine();
     ImGui::SetNextItemWidth(80);

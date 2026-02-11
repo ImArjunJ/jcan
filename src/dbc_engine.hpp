@@ -39,26 +39,60 @@ struct signal_info {
 
 class dbc_engine {
  public:
-  [[nodiscard]] bool loaded() const { return net_ != nullptr; }
-  [[nodiscard]] const std::string& filename() const { return filename_; }
+  [[nodiscard]] bool loaded() const { return !networks_.empty(); }
+
+  [[nodiscard]] std::vector<std::string> filenames() const {
+    std::vector<std::string> out;
+    out.reserve(networks_.size());
+    for (const auto& n : networks_) out.push_back(n.filename);
+    return out;
+  }
+
+  [[nodiscard]] const std::string& filename() const {
+    static const std::string empty;
+    if (networks_.empty()) return empty;
+    return networks_.front().filename;
+  }
+
+  [[nodiscard]] std::vector<std::string> paths() const {
+    std::vector<std::string> out;
+    out.reserve(networks_.size());
+    for (const auto& n : networks_) out.push_back(n.path);
+    return out;
+  }
 
   bool load(const std::filesystem::path& path) {
+    for (const auto& n : networks_) {
+      if (n.path == path.string()) return true;
+    }
     std::ifstream ifs(path);
     if (!ifs.is_open()) return false;
 
     auto net = dbcppp::INetwork::LoadDBCFromIs(ifs);
     if (!net) return false;
 
-    net_ = std::move(net);
-    filename_ = path.filename().string();
+    loaded_network ln;
+    ln.net = std::move(net);
+    ln.filename = path.filename().string();
+    ln.path = path.string();
+    networks_.push_back(std::move(ln));
     rebuild_index();
     return true;
   }
 
   void unload() {
-    net_.reset();
+    networks_.clear();
     msg_index_.clear();
-    filename_.clear();
+  }
+
+  void unload_one(const std::string& path) {
+    auto it =
+        std::remove_if(networks_.begin(), networks_.end(),
+                       [&](const loaded_network& n) { return n.path == path; });
+    if (it != networks_.end()) {
+      networks_.erase(it, networks_.end());
+      rebuild_index();
+    }
   }
 
   [[nodiscard]] bool has_message(uint32_t id) const {
@@ -169,17 +203,24 @@ class dbc_engine {
   }
 
  private:
+  struct loaded_network {
+    std::unique_ptr<dbcppp::INetwork> net;
+    std::string filename;
+    std::string path;
+  };
+
   void rebuild_index() {
     msg_index_.clear();
-    if (!net_) return;
-    for (const auto& msg : net_->Messages()) {
-      msg_index_[msg.Id()] = &msg;
+    for (const auto& ln : networks_) {
+      if (!ln.net) continue;
+      for (const auto& msg : ln.net->Messages()) {
+        msg_index_[msg.Id()] = &msg;
+      }
     }
   }
 
-  std::unique_ptr<dbcppp::INetwork> net_;
+  std::vector<loaded_network> networks_;
   std::unordered_map<uint64_t, const dbcppp::IMessage*> msg_index_;
-  std::string filename_;
 };
 
 }  // namespace jcan

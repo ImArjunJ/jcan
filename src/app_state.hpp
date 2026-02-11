@@ -175,7 +175,7 @@ struct app_state {
   bool has_first_frame{false};
 
   dbc_engine dbc;
-  std::string last_dbc_path;
+  std::vector<std::string> dbc_paths;
 
   tx_scheduler tx_sched;
 

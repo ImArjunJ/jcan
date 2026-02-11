@@ -11,7 +11,7 @@ namespace jcan {
 struct settings {
   int selected_bitrate{6};
   std::string last_adapter_port;
-  std::string last_dbc_path;
+  std::vector<std::string> dbc_paths;
   bool show_signals{true};
   bool show_transmitter{true};
   bool show_statistics{true};
@@ -47,7 +47,14 @@ struct settings {
 
     ofs << "selected_bitrate=" << selected_bitrate << "\n";
     ofs << "last_adapter_port=" << last_adapter_port << "\n";
-    ofs << "last_dbc_path=" << last_dbc_path << "\n";
+    {
+      std::string joined;
+      for (std::size_t i = 0; i < dbc_paths.size(); ++i) {
+        if (i) joined += ';';
+        joined += dbc_paths[i];
+      }
+      ofs << "dbc_paths=" << joined << "\n";
+    }
     ofs << "show_signals=" << (show_signals ? 1 : 0) << "\n";
     ofs << "show_transmitter=" << (show_transmitter ? 1 : 0) << "\n";
     ofs << "show_statistics=" << (show_statistics ? 1 : 0) << "\n";
@@ -88,7 +95,21 @@ struct settings {
 
     selected_bitrate = get_int("selected_bitrate", 6);
     last_adapter_port = get_str("last_adapter_port");
-    last_dbc_path = get_str("last_dbc_path");
+    {
+      auto raw = get_str("dbc_paths");
+      if (raw.empty()) raw = get_str("last_dbc_path");
+      dbc_paths.clear();
+      if (!raw.empty()) {
+        std::size_t pos = 0;
+        while (pos < raw.size()) {
+          auto sep = raw.find(';', pos);
+          if (sep == std::string::npos) sep = raw.size();
+          auto p = raw.substr(pos, sep - pos);
+          if (!p.empty()) dbc_paths.push_back(p);
+          pos = sep + 1;
+        }
+      }
+    }
     show_signals = get_int("show_signals", 1) != 0;
     show_transmitter = get_int("show_transmitter", 1) != 0;
     show_statistics = get_int("show_statistics", 1) != 0;

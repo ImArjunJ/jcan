@@ -16,6 +16,7 @@
 namespace jcan {
 
 struct tx_job {
+  uint32_t instance_id{0};
   uint32_t msg_id{0};
   std::string msg_name;
   can_frame frame{};
@@ -27,6 +28,11 @@ struct tx_job {
 
   using clock = std::chrono::steady_clock;
   clock::time_point last_sent{};
+
+  static uint32_t next_id() {
+    static uint32_t counter = 0;
+    return ++counter;
+  }
 };
 
 class tx_scheduler {
@@ -34,7 +40,7 @@ class tx_scheduler {
   void upsert(tx_job job) {
     std::lock_guard lk(mtx_);
     for (auto& j : jobs_) {
-      if (j.msg_id == job.msg_id) {
+      if (j.instance_id == job.instance_id) {
         j = std::move(job);
         return;
       }
@@ -42,9 +48,10 @@ class tx_scheduler {
     jobs_.push_back(std::move(job));
   }
 
-  void remove(uint32_t msg_id) {
+  void remove(uint32_t instance_id) {
     std::lock_guard lk(mtx_);
-    std::erase_if(jobs_, [&](const tx_job& j) { return j.msg_id == msg_id; });
+    std::erase_if(
+        jobs_, [&](const tx_job& j) { return j.instance_id == instance_id; });
   }
 
   void clear() {

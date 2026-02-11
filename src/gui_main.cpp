@@ -11,6 +11,7 @@
 #include <thread>
 
 #include "app_state.hpp"
+#include "async_dialog.hpp"
 #include "discovery.hpp"
 #include "logger.hpp"
 #include "settings.hpp"
@@ -22,6 +23,24 @@
 
 static void glfw_error_callback(int error, const char* description) {
   std::fprintf(stderr, "GLFW Error %d: %s\n", error, description);
+}
+
+enum class dialog_id { none, open_dbc, save_csv, save_asc, open_replay };
+
+static void update_dbc_status(jcan::app_state& state) {
+  if (state.dbc.loaded()) {
+    state.dbc_paths = state.dbc.paths();
+    auto names = state.dbc.filenames();
+    std::string joined;
+    for (std::size_t i = 0; i < names.size(); ++i) {
+      if (i) joined += ", ";
+      joined += names[i];
+    }
+    state.status_text = std::format("DBC: {} ({} msgs)", joined,
+                                    state.dbc.message_ids().size());
+  } else {
+    state.status_text = state.connected ? "DBC unloaded" : "Disconnected";
+  }
 }
 
 static jcan::app_state* g_drop_state = nullptr;
@@ -36,10 +55,7 @@ static void glfw_drop_callback([[maybe_unused]] GLFWwindow* window, int count,
       for (auto& c : ext) c = static_cast<char>(std::tolower(c));
       if (ext == ".dbc") {
         if (g_drop_state->dbc.load(path)) {
-          g_drop_state->last_dbc_path = path;
-          g_drop_state->status_text =
-              std::format("DBC: {} ({} msgs)", g_drop_state->dbc.filename(),
-                          g_drop_state->dbc.message_ids().size());
+          update_dbc_status(*g_drop_state);
         } else {
           g_drop_state->status_text = "DBC load failed!";
         }
@@ -70,24 +86,6 @@ static void setup_default_layout(ImGuiID dockspace_id) {
   ImGui::DockBuilderFinish(dockspace_id);
 }
 
-static void open_dbc_dialog(jcan::app_state& state) {
-  nfdu8char_t* out_path = nullptr;
-  nfdu8filteritem_t filters[] = {{"DBC Files", "dbc"}};
-  nfdresult_t result = NFD_OpenDialogU8(&out_path, filters, 1, nullptr);
-
-  if (result == NFD_OKAY && out_path) {
-    std::string path_str(out_path);
-    if (state.dbc.load(path_str)) {
-      state.last_dbc_path = path_str;
-      state.status_text = std::format("DBC: {} ({} msgs)", state.dbc.filename(),
-                                      state.dbc.message_ids().size());
-    } else {
-      state.status_text = "DBC load failed!";
-    }
-    NFD_FreePathU8(out_path);
-  }
-}
-
 int main() {
   glfwSetErrorCallback(glfw_error_callback);
   if (!glfwInit()) return 1;
@@ -97,6 +95,9 @@ int main() {
   glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
   NFD_Init();
+
+  jcan::async_dialog file_dialog;
+  dialog_id pending_dialog = dialog_id::none;
 
   jcan::settings settings;
   settings.load();
@@ -185,13 +186,21 @@ int main() {
     }
   }
 
-  if (!settings.last_dbc_path.empty() &&
-      std::filesystem::exists(settings.last_dbc_path)) {
-    if (state.dbc.load(settings.last_dbc_path)) {
-      state.last_dbc_path = settings.last_dbc_path;
-      state.status_text = std::format("DBC: {} ({} msgs)", state.dbc.filename(),
-                                      state.dbc.message_ids().size());
+  for (const auto& p : settings.dbc_paths) {
+    if (!p.empty() && std::filesystem::exists(p)) {
+      state.dbc.load(p);
     }
+  }
+  if (state.dbc.loaded()) {
+    state.dbc_paths = state.dbc.paths();
+    auto names = state.dbc.filenames();
+    std::string joined;
+    for (std::size_t i = 0; i < names.size(); ++i) {
+      if (i) joined += ", ";
+      joined += names[i];
+    }
+    state.status_text = std::format("DBC: {} ({} msgs)", joined,
+                                    state.dbc.message_ids().size());
   }
 
   g_drop_state = &state;
@@ -251,36 +260,48 @@ int main() {
 
     if (ImGui::BeginMainMenuBar()) {
       if (ImGui::BeginMenu("File")) {
-        if (ImGui::MenuItem("Load DBC...", "Ctrl+O")) open_dbc_dialog(state);
+        if (ImGui::MenuItem("Load DBC...", "Ctrl+O", false,
+                            !file_dialog.busy())) {
+          file_dialog.open_file({{"DBC Files", "dbc"}});
+          pending_dialog = dialog_id::open_dbc;
+        }
         if (state.dbc.loaded()) {
-          if (ImGui::MenuItem("Unload DBC")) {
-            state.dbc.unload();
-            state.last_dbc_path.clear();
-            state.status_text =
-                state.connected ? "DBC unloaded" : "Disconnected";
+          if (ImGui::BeginMenu("Unload DBC")) {
+            auto fnames = state.dbc.filenames();
+            auto fpaths = state.dbc.paths();
+            for (std::size_t di = 0; di < fnames.size(); ++di) {
+              if (ImGui::MenuItem(fnames[di].c_str())) {
+                state.dbc.unload_one(fpaths[di]);
+                state.dbc_paths = state.dbc.paths();
+                state.status_text =
+                    state.dbc.loaded()
+                        ? std::format(
+                              "DBC: {} file{}", state.dbc.filenames().size(),
+                              state.dbc.filenames().size() > 1 ? "s" : "")
+                        : (state.connected ? "DBC unloaded" : "Disconnected");
+              }
+            }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Unload All")) {
+              state.dbc.unload();
+              state.dbc_paths.clear();
+              state.status_text =
+                  state.connected ? "DBC unloaded" : "Disconnected";
+            }
+            ImGui::EndMenu();
           }
         }
         ImGui::Separator();
         if (!state.logger.recording()) {
-          if (ImGui::MenuItem("Start Recording (CSV)...", "Ctrl+R")) {
-            nfdu8char_t* out_path = nullptr;
-            nfdu8filteritem_t filters[] = {{"CSV Log", "csv"}};
-            if (NFD_SaveDialogU8(&out_path, filters, 1, nullptr,
-                                 "capture.csv") == NFD_OKAY &&
-                out_path) {
-              state.logger.start(out_path);
-              NFD_FreePathU8(out_path);
-            }
+          if (ImGui::MenuItem("Start Recording (CSV)...", "Ctrl+R", false,
+                              !file_dialog.busy())) {
+            file_dialog.save_file({{"CSV Log", "csv"}}, "capture.csv");
+            pending_dialog = dialog_id::save_csv;
           }
-          if (ImGui::MenuItem("Start Recording (ASC)...")) {
-            nfdu8char_t* out_path = nullptr;
-            nfdu8filteritem_t filters[] = {{"Vector ASC", "asc"}};
-            if (NFD_SaveDialogU8(&out_path, filters, 1, nullptr,
-                                 "capture.asc") == NFD_OKAY &&
-                out_path) {
-              state.logger.start(out_path);
-              NFD_FreePathU8(out_path);
-            }
+          if (ImGui::MenuItem("Start Recording (ASC)...", nullptr, false,
+                              !file_dialog.busy())) {
+            file_dialog.save_file({{"Vector ASC", "asc"}}, "capture.asc");
+            pending_dialog = dialog_id::save_asc;
           }
         } else {
           auto rec_label = std::format("Stop Recording ({} frames)",
@@ -290,23 +311,10 @@ int main() {
           }
         }
         if (!state.replaying.load()) {
-          if (ImGui::MenuItem("Replay Log...")) {
-            nfdu8char_t* out_path = nullptr;
-            nfdu8filteritem_t filters[] = {{"CSV / ASC Log", "csv,asc"}};
-            if (NFD_OpenDialogU8(&out_path, filters, 1, nullptr) == NFD_OKAY &&
-                out_path) {
-              std::string path_str(out_path);
-              NFD_FreePathU8(out_path);
-              std::vector<std::pair<int64_t, jcan::can_frame>> frames;
-              if (path_str.size() >= 4 &&
-                  path_str.substr(path_str.size() - 4) == ".asc")
-                frames = jcan::frame_logger::load_asc(path_str);
-              else
-                frames = jcan::frame_logger::load_csv(path_str);
-              if (!frames.empty()) {
-                state.start_replay(std::move(frames));
-              }
-            }
+          if (ImGui::MenuItem("Replay Log...", nullptr, false,
+                              !file_dialog.busy())) {
+            file_dialog.open_file({{"CSV / ASC Log", "csv,asc"}});
+            pending_dialog = dialog_id::open_replay;
           }
         } else {
           bool paused = state.replay_paused.load();
@@ -391,8 +399,11 @@ int main() {
             paused ? " PAUSED" : "",
             speed != 1.0f ? std::format(" {:.2g}x", speed) : "");
       }
-      if (state.dbc.loaded())
-        full_status += std::format("[{}] ", state.dbc.filename());
+      if (state.dbc.loaded()) {
+        auto dbc_names = state.dbc.filenames();
+        for (const auto& dn : dbc_names)
+          full_status += std::format("[{}] ", dn);
+      }
       full_status += state.status_text;
 
       float status_width = ImGui::CalcTextSize(full_status.c_str()).x + 16;
@@ -407,22 +418,53 @@ int main() {
       ImGui::EndMainMenuBar();
     }
 
-    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_O)) open_dbc_dialog(state);
+    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_O) && !file_dialog.busy()) {
+      file_dialog.open_file({{"DBC Files", "dbc"}});
+      pending_dialog = dialog_id::open_dbc;
+    }
     if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Q))
       glfwSetWindowShouldClose(window, GLFW_TRUE);
     if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_R)) {
       if (!state.logger.recording()) {
-        nfdu8char_t* out_path = nullptr;
-        nfdu8filteritem_t filters[] = {{"CSV Log", "csv"}};
-        if (NFD_SaveDialogU8(&out_path, filters, 1, nullptr, "capture.csv") ==
-                NFD_OKAY &&
-            out_path) {
-          state.logger.start(out_path);
-          NFD_FreePathU8(out_path);
+        if (!file_dialog.busy()) {
+          file_dialog.save_file({{"CSV Log", "csv"}}, "capture.csv");
+          pending_dialog = dialog_id::save_csv;
         }
       } else {
         state.logger.stop();
       }
+    }
+
+    if (auto result = file_dialog.poll()) {
+      switch (pending_dialog) {
+        case dialog_id::open_dbc:
+          if (*result) {
+            if (state.dbc.load(**result))
+              update_dbc_status(state);
+            else
+              state.status_text = "DBC load failed!";
+          }
+          break;
+        case dialog_id::save_csv:
+        case dialog_id::save_asc:
+          if (*result) state.logger.start(**result);
+          break;
+        case dialog_id::open_replay:
+          if (*result) {
+            auto& path_str = **result;
+            std::vector<std::pair<int64_t, jcan::can_frame>> frames;
+            if (path_str.size() >= 4 &&
+                path_str.substr(path_str.size() - 4) == ".asc")
+              frames = jcan::frame_logger::load_asc(path_str);
+            else
+              frames = jcan::frame_logger::load_csv(path_str);
+            if (!frames.empty()) state.start_replay(std::move(frames));
+          }
+          break;
+        default:
+          break;
+      }
+      pending_dialog = dialog_id::none;
     }
 
     state.poll_frames();
@@ -453,7 +495,7 @@ int main() {
     settings.show_transmitter = state.show_transmitter;
     settings.show_statistics = state.show_statistics;
     settings.ui_scale = state.ui_scale;
-    settings.last_dbc_path = state.last_dbc_path;
+    settings.dbc_paths = state.dbc_paths;
     if (!state.adapter_slots.empty())
       settings.last_adapter_port = state.adapter_slots[0]->desc.port;
     int w, h;
