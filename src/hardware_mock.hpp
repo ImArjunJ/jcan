@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cmath>
 #include <cstdlib>
 #include <optional>
 #include <string>
@@ -13,6 +14,9 @@ namespace jcan {
 struct mock_adapter {
   bool open_{false};
   uint32_t seq_{0};
+
+  // ~10,000 msgs/sec: 100 frames per 10ms batch
+  static constexpr int k_batch_size = 100;
 
   [[nodiscard]] result<> open(
       const std::string&,
@@ -49,18 +53,33 @@ struct mock_adapter {
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
     (void)timeout_ms;
 
+    static constexpr uint32_t demo_ids[] = {
+        0x100, 0x200, 0x310, 0x400, 0x500, 0x600, 0x7DF, 0x123,
+    };
+    static constexpr int n_ids =
+        static_cast<int>(sizeof(demo_ids) / sizeof(demo_ids[0]));
+
     std::vector<can_frame> frames;
-    can_frame f{};
-    f.timestamp = can_frame::clock::now();
+    frames.reserve(k_batch_size);
+    auto now = can_frame::clock::now();
 
-    static constexpr uint32_t demo_ids[] = {0x100, 0x200, 0x310, 0x7DF};
-    f.id = demo_ids[seq_ % 4];
-    f.dlc = 8;
-    for (uint8_t i = 0; i < 8; ++i)
-      f.data[i] = static_cast<uint8_t>((seq_ + i) & 0xFF);
+    for (int b = 0; b < k_batch_size; ++b) {
+      can_frame f{};
+      f.timestamp = now;
+      f.id = demo_ids[seq_ % n_ids];
+      f.dlc = 8;
 
-    ++seq_;
-    frames.push_back(f);
+      // Generate somewhat realistic varying data using sin waves
+      double t = static_cast<double>(seq_) * 0.001;
+      for (uint8_t i = 0; i < 8; ++i) {
+        double wave =
+            std::sin(t * (1.0 + i * 0.7) + f.id * 0.1) * 127.0 + 128.0;
+        f.data[i] = static_cast<uint8_t>(static_cast<int>(wave) & 0xFF);
+      }
+
+      ++seq_;
+      frames.push_back(f);
+    }
     return frames;
   }
 };

@@ -39,8 +39,8 @@ inline bool is_signal_on_any_chart(const plotter_state& ps,
 /// Toggle a signal on the active chart.
 inline void toggle_signal(plotter_state& ps, const signal_key& key) {
   if (ps.charts.empty()) ps.charts.emplace_back();
-  int idx = std::clamp(ps.active_chart, 0,
-                       static_cast<int>(ps.charts.size()) - 1);
+  int idx =
+      std::clamp(ps.active_chart, 0, static_cast<int>(ps.charts.size()) - 1);
   auto& chart = ps.charts[static_cast<std::size_t>(idx)];
 
   // Check if already on this chart
@@ -65,9 +65,9 @@ inline void draw_plotter(app_state& state, plotter_state& ps) {
     return;
   }
 
-  if (!state.dbc.loaded()) {
+  if (!state.any_dbc_loaded()) {
     ImGui::TextDisabled(
-        "No DBC loaded — load a DBC file to see signal channels");
+        "No DBC loaded -- load a DBC file to see signal channels");
     ImGui::End();
     return;
   }
@@ -77,7 +77,7 @@ inline void draw_plotter(app_state& state, plotter_state& ps) {
   // --- Channel list sidebar ---
   if (ImGui::BeginChild("##sidebar", ImVec2(sidebar_width, 0), true)) {
     auto msg_name_fn = [&state](uint32_t id) -> std::string {
-      return state.dbc.message_name(id);
+      return state.any_message_name(id);
     };
 
     auto is_on = [&ps](const signal_key& key) -> bool {
@@ -91,9 +91,9 @@ inline void draw_plotter(app_state& state, plotter_state& ps) {
   ImGui::SameLine();
 
   // --- Charts area (no scroll — charts fill the space exactly) ---
-  if (ImGui::BeginChild("##charts_area", ImVec2(0, 0), false,
-                         ImGuiWindowFlags_NoScrollbar |
-                             ImGuiWindowFlags_NoScrollWithMouse)) {
+  if (ImGui::BeginChild(
+          "##charts_area", ImVec2(0, 0), false,
+          ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
     // Toolbar
     if (ImGui::SmallButton("+ Chart")) {
       ps.charts.emplace_back();
@@ -134,8 +134,7 @@ inline void draw_plotter(app_state& state, plotter_state& ps) {
     // Draw each chart — divide available space evenly
     int n_charts = static_cast<int>(ps.charts.size());
     if (n_charts == 0) {
-      ImGui::TextDisabled(
-          "Click '+ Chart' or select signals from the sidebar");
+      ImGui::TextDisabled("Click '+ Chart' or select signals from the sidebar");
     } else {
       float avail_h = ImGui::GetContentRegionAvail().y;
       // Each chart has: header line (~ImGui::GetFrameHeight) + canvas + legend
@@ -171,13 +170,17 @@ inline void draw_plotter(app_state& state, plotter_state& ps) {
 
           // Drop target on header — drop signal onto this chart
           if (ImGui::BeginDragDropTarget()) {
-            if (const auto* payload = ImGui::AcceptDragDropPayload("SIGNAL_KEY")) {
+            if (const auto* payload =
+                    ImGui::AcceptDragDropPayload("SIGNAL_KEY")) {
               auto* key = *static_cast<const signal_key* const*>(payload->Data);
               ps.active_chart = ci;
               // Add if not already on this chart
               bool already = false;
               for (const auto& tr : chart.traces) {
-                if (tr.key == *key) { already = true; break; }
+                if (tr.key == *key) {
+                  already = true;
+                  break;
+                }
               }
               if (!already) {
                 chart_trace tr;

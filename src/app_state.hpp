@@ -5,7 +5,9 @@
 #include <chrono>
 #include <cstdlib>
 #include <deque>
+#include <filesystem>
 #include <format>
+#include <fstream>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -35,6 +37,7 @@ struct bus_stats {
     uint64_t total_count{0};
     uint64_t window_count{0};
     float rate_hz{0.f};
+    uint8_t last_source{0};  // last adapter slot that sent this ID
   };
 
   std::unordered_map<uint32_t, id_stats> per_id;
@@ -95,6 +98,7 @@ struct bus_stats {
     auto& st = per_id[f.id];
     st.total_count++;
     st.window_count++;
+    st.last_source = f.source;
   }
 
   void record_slcan_status(uint8_t status) {
@@ -124,6 +128,7 @@ struct app_state {
     adapter hw;
     frame_buffer<8192> rx_buf;
     std::optional<std::jthread> io_thread;
+    dbc_engine slot_dbc;  // per-channel DBC (optional, falls back to global)
 
     void start_io() {
       io_thread.emplace([this](std::stop_token stop) {
@@ -192,6 +197,129 @@ struct app_state {
   std::atomic<std::size_t> replay_total_frames{0};
 
   bus_stats stats;
+
+  std::optional<std::jthread> export_thread;
+  std::atomic<bool> exporting{false};
+  std::atomic<float> export_progress{0.f};
+  std::string export_result_msg;
+
+  const dbc_engine& dbc_for_frame(const can_frame& f) const {
+    if (f.source < adapter_slots.size()) {
+      auto& slot_dbc = adapter_slots[f.source]->slot_dbc;
+      if (slot_dbc.loaded()) return slot_dbc;
+    }
+    return dbc;
+  }
+
+  bool any_dbc_has_message(const can_frame& f) const {
+    return dbc_for_frame(f).has_message(f.id);
+  }
+
+  bool any_dbc_loaded() const {
+    if (dbc.loaded()) return true;
+    for (const auto& slot : adapter_slots) {
+      if (slot->slot_dbc.loaded()) return true;
+    }
+    return false;
+  }
+
+  std::string message_name_for(uint32_t id, uint8_t source) const {
+    if (source < adapter_slots.size()) {
+      auto& slot_dbc = adapter_slots[source]->slot_dbc;
+      if (slot_dbc.loaded()) return slot_dbc.message_name(id);
+    }
+    return dbc.message_name(id);
+  }
+
+  std::string any_message_name(uint32_t id) const {
+    auto name = dbc.message_name(id);
+    if (!name.empty()) return name;
+    for (const auto& slot : adapter_slots) {
+      if (slot->slot_dbc.loaded()) {
+        name = slot->slot_dbc.message_name(id);
+        if (!name.empty()) return name;
+      }
+    }
+    return {};
+  }
+
+  std::vector<decoded_signal> any_decode(const can_frame& f) const {
+    return dbc_for_frame(f).decode(f);
+  }
+
+  void start_export(const std::string& path) {
+    if (exporting.load()) return;
+    auto frames_copy = scrollback;
+    auto base_time = first_frame_time;
+    exporting.store(true);
+    export_progress.store(0.f);
+    export_result_msg.clear();
+    export_thread.emplace([this, path, frames = std::move(frames_copy),
+                           base_time](std::stop_token stop) {
+      auto ext = std::filesystem::path(path).extension().string();
+      for (auto& c : ext) c = static_cast<char>(std::tolower(c));
+      bool asc = (ext == ".asc");
+
+      std::ofstream ofs(path, std::ios::out | std::ios::trunc);
+      if (!ofs.is_open()) {
+        export_result_msg = "Export failed: could not open file";
+        exporting.store(false);
+        return;
+      }
+
+      if (asc) {
+        ofs << "date Thu Jan  1 00:00:00 AM 1970\n";
+        ofs << "base hex  timestamps absolute\n";
+        ofs << "internal events logged\n";
+        ofs << "Begin TriggerBlock Thu Jan  1 00:00:00 AM 1970\n";
+      } else {
+        ofs << "timestamp_us,dir,id,extended,rtr,dlc,fd,brs,data\n";
+      }
+
+      for (std::size_t i = 0; i < frames.size(); ++i) {
+        if (stop.stop_requested()) break;
+        const auto& f = frames[i];
+        auto us = std::chrono::duration_cast<std::chrono::microseconds>(
+                      f.timestamp - base_time)
+                      .count();
+        uint8_t len = frame_payload_len(f);
+
+        if (asc) {
+          double seconds = static_cast<double>(us) / 1e6;
+          ofs << std::format("{:>12.6f}", seconds) << "  1  ";
+          if (f.extended)
+            ofs << std::format("{:08X}", f.id) << "x";
+          else
+            ofs << std::format("{:03X}", f.id);
+          ofs << (f.tx ? "  Tx  " : "  Rx  ") << (f.fd ? "fd  " : "d  ")
+              << static_cast<int>(len);
+          for (uint8_t j = 0; j < len; ++j)
+            ofs << std::format("  {:02X}", f.data[j]);
+          if (f.fd && f.brs) ofs << "  BRS";
+          ofs << "\n";
+        } else {
+          ofs << us << "," << (f.tx ? "Tx" : "Rx") << ",0x"
+              << std::format("{:03X}", f.id) << "," << (f.extended ? 1 : 0)
+              << "," << (f.rtr ? 1 : 0) << "," << static_cast<int>(f.dlc) << ","
+              << (f.fd ? 1 : 0) << "," << (f.brs ? 1 : 0) << ",";
+          for (uint8_t j = 0; j < len; ++j) {
+            if (j) ofs << ' ';
+            ofs << std::format("{:02X}", f.data[j]);
+          }
+          ofs << "\n";
+        }
+
+        if ((i & 0xFFF) == 0)  // update progress every 4096 frames
+          export_progress.store(static_cast<float>(i + 1) /
+                                static_cast<float>(frames.size()));
+      }
+
+      if (asc) ofs << "End TriggerBlock\n";
+      export_progress.store(1.f);
+      export_result_msg = std::format("Exported {} frames", frames.size());
+      exporting.store(false);
+    });
+  }
 
   adapter* tx_adapter() {
     if (tx_slot_idx >= 0 &&
@@ -322,8 +450,8 @@ struct app_state {
                 static_cast<long>(scrollback.size() - k_max_scrollback));
       logger.log(f);
 
-      if (dbc.has_message(f.id)) {
-        auto decoded = dbc.decode(f);
+      if (dbc_for_frame(f).has_message(f.id)) {
+        auto decoded = dbc_for_frame(f).decode(f);
         for (const auto& sig : decoded) {
           signals.push(signal_key{.msg_id = f.id, .name = sig.name},
                        f.timestamp, sig.value, sig.unit, sig.minimum,
@@ -455,8 +583,8 @@ struct app_state {
       scrollback.push_back(f);
 
       // Decode signals
-      if (dbc.has_message(f.id)) {
-        auto decoded = dbc.decode(f);
+      if (dbc_for_frame(f).has_message(f.id)) {
+        auto decoded = dbc_for_frame(f).decode(f);
         for (const auto& sig : decoded) {
           signals.push(signal_key{.msg_id = f.id, .name = sig.name},
                        f.timestamp, sig.value, sig.unit, sig.minimum,

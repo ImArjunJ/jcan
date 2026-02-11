@@ -1,6 +1,7 @@
 #pragma once
 
 #include <imgui.h>
+#include <nfd.h>
 
 #include <format>
 
@@ -44,6 +45,31 @@ inline void draw_connection_modal(app_state& state) {
         }
         ImGui::SameLine();
         if (ImGui::SmallButton("Disconnect")) remove_idx = i;
+
+        // Per-channel DBC
+        ImGui::Indent(28.0f);
+        if (slot->slot_dbc.loaded()) {
+          auto fnames = slot->slot_dbc.filenames();
+          for (const auto& fn : fnames) {
+            ImGui::TextDisabled("DBC: %s", fn.c_str());
+          }
+          ImGui::SameLine();
+          if (ImGui::SmallButton("Unload DBC")) {
+            slot->slot_dbc.unload();
+          }
+        } else {
+          ImGui::TextDisabled("DBC: (global)");
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Load DBC...")) {
+          nfdchar_t* out_path = nullptr;
+          nfdfilteritem_t filters[] = {{"DBC Files", "dbc"}};
+          if (NFD_OpenDialog(&out_path, filters, 1, nullptr) == NFD_OKAY) {
+            slot->slot_dbc.load(out_path);
+            NFD_FreePath(out_path);
+          }
+        }
+        ImGui::Unindent(28.0f);
 
         ImGui::PopID();
       }

@@ -322,13 +322,18 @@ int main() {
             state.logger.stop();
           }
         }
-        if (!state.scrollback.empty()) {
+        if (!state.scrollback.empty() && !state.exporting.load()) {
           if (ImGui::MenuItem("Export Log...", "Ctrl+E", false,
                               !file_dialog.busy())) {
             file_dialog.save_file({{"CSV Log", "csv"}, {"Vector ASC", "asc"}},
                                   "export.csv");
             pending_dialog = dialog_id::export_log;
           }
+        }
+        if (state.exporting.load()) {
+          auto pct = state.export_progress.load() * 100.f;
+          auto label = std::format("Exporting... {:.0f}%%", pct);
+          ImGui::MenuItem(label.c_str(), nullptr, false, false);
         }
         if (ImGui::MenuItem("Import Log...", "Ctrl+I", false,
                             !file_dialog.busy())) {
@@ -417,6 +422,9 @@ int main() {
       std::string full_status;
       if (state.logger.recording())
         full_status += std::format("[REC:{}] ", state.logger.frame_count());
+      if (state.exporting.load())
+        full_status += std::format("[EXPORT:{:.0f}%] ",
+                                   state.export_progress.load() * 100.f);
       if (state.replaying.load()) {
         bool paused = state.replay_paused.load();
         float speed = state.replay_speed.load();
@@ -451,7 +459,7 @@ int main() {
     if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Q))
       glfwSetWindowShouldClose(window, GLFW_TRUE);
     if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_E) && !file_dialog.busy() &&
-        !state.scrollback.empty()) {
+        !state.scrollback.empty() && !state.exporting.load()) {
       file_dialog.save_file({{"CSV Log", "csv"}, {"Vector ASC", "asc"}},
                             "export.csv");
       pending_dialog = dialog_id::export_log;
@@ -499,12 +507,9 @@ int main() {
           break;
         case dialog_id::export_log:
           if (*result) {
-            if (jcan::frame_logger::export_to_file(**result, state.scrollback,
-                                                   state.first_frame_time))
-              state.status_text =
-                  std::format("Exported {} frames", state.scrollback.size());
-            else
-              state.status_text = "Export failed!";
+            state.start_export(**result);
+            state.status_text =
+                std::format("Exporting {} frames...", state.scrollback.size());
           }
           break;
         case dialog_id::import_log:
@@ -538,6 +543,12 @@ int main() {
     }
 
     state.poll_frames();
+
+    // Check async export completion
+    if (!state.exporting.load() && !state.export_result_msg.empty()) {
+      state.status_text = state.export_result_msg;
+      state.export_result_msg.clear();
+    }
 
     jcan::widgets::draw_connection_modal(state);
     jcan::widgets::draw_monitor_live(state);
@@ -579,6 +590,7 @@ int main() {
     settings.save();
   }
 
+  state.export_thread.reset();  // wait for async export to finish
   state.logger.stop();
   state.disconnect();
 

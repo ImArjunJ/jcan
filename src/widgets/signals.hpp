@@ -18,7 +18,7 @@ inline void draw_signals(app_state& state) {
     return;
   }
 
-  if (!state.dbc.loaded()) {
+  if (!state.any_dbc_loaded()) {
     ImGui::TextDisabled("No DBC loaded — drag & drop or File > Load DBC");
     ImGui::End();
     return;
@@ -47,10 +47,10 @@ inline void draw_signals(app_state& state) {
   rows.reserve(state.monitor_rows.size() * 4);
 
   for (const auto& mr : state.monitor_rows) {
-    auto msg_name = state.dbc.message_name(mr.frame.id);
+    auto msg_name = state.message_name_for(mr.frame.id, mr.frame.source);
     if (msg_name.empty()) continue;
 
-    auto decoded = state.dbc.decode(mr.frame);
+    auto decoded = state.any_decode(mr.frame);
     for (const auto& sig : decoded) {
       rows.push_back(sig_row{
           .message = msg_name,

@@ -66,7 +66,7 @@ inline void draw_statistics(app_state& state) {
                          ImGuiTableFlags_Sortable |
                          ImGuiTableFlags_SizingStretchProp;
 
-  const bool have_dbc = state.dbc.loaded();
+  const bool have_dbc = state.any_dbc_loaded();
   const int col_count = have_dbc ? 4 : 3;
 
   if (ImGui::BeginTable("##stats_table", col_count, flags)) {
@@ -82,11 +82,12 @@ inline void draw_statistics(app_state& state) {
       uint32_t id;
       uint64_t count;
       float rate;
+      uint8_t source;
     };
     std::vector<stats_row> rows;
     rows.reserve(st.per_id.size());
     for (const auto& [id, is] : st.per_id) {
-      rows.push_back({id, is.total_count, is.rate_hz});
+      rows.push_back({id, is.total_count, is.rate_hz, is.last_source});
     }
 
     int count_col = have_dbc ? 2 : 1;
@@ -120,7 +121,7 @@ inline void draw_statistics(app_state& state) {
       if (state.mono_font) ImGui::PopFont();
       if (have_dbc) {
         ImGui::TableNextColumn();
-        auto name = state.dbc.message_name(r.id);
+        auto name = state.message_name_for(r.id, r.source);
         if (!name.empty()) ImGui::TextUnformatted(name.c_str());
       }
       ImGui::TableNextColumn();

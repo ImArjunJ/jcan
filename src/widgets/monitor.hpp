@@ -21,7 +21,7 @@ inline std::string hex_data(const can_frame& f) {
 }
 
 inline bool frame_matches_filter(const can_frame& f, const char* filter,
-                                 const dbc_engine& dbc) {
+                                 const app_state& state) {
   if (filter[0] == '\0') return true;
   std::string filt(filter);
   for (auto& c : filt) c = static_cast<char>(std::toupper(c));
@@ -30,8 +30,8 @@ inline bool frame_matches_filter(const can_frame& f, const char* filter,
       f.extended ? std::format("{:08X}", f.id) : std::format("{:03X}", f.id);
   if (id_str.find(filt) != std::string::npos) return true;
 
-  if (dbc.loaded()) {
-    auto name = dbc.message_name(f.id);
+  if (state.any_dbc_loaded()) {
+    auto name = state.message_name_for(f.id, f.source);
     if (!name.empty()) {
       for (auto& c : name) c = static_cast<char>(std::toupper(c));
       if (name.find(filt) != std::string::npos) return true;
@@ -78,10 +78,10 @@ inline void monitor_row_context_menu(const can_frame& f, app_state& state,
       std::snprintf(state.filter_text, sizeof(state.filter_text), "%s",
                     id_str.c_str());
     }
-    if (state.dbc.loaded()) {
-      auto msg = state.dbc.message_name(f.id);
+    if (state.any_dbc_loaded()) {
+      auto msg = state.message_name_for(f.id, f.source);
       if (!msg.empty()) {
-        auto decoded = state.dbc.decode(f);
+        auto decoded = state.any_decode(f);
         if (ImGui::BeginMenu("Copy Signal")) {
           for (const auto& sig : decoded) {
             auto label =
@@ -123,7 +123,7 @@ inline void draw_monitor_live(app_state& state) {
                            ImGuiTableFlags_Sortable |
                            ImGuiTableFlags_SizingStretchProp;
 
-    const bool have_dbc = state.dbc.loaded();
+    const bool have_dbc = state.any_dbc_loaded();
     const int col_count = have_dbc ? 9 : 7;
 
     if (ImGui::BeginTable("##live_table", col_count, flags)) {
@@ -166,7 +166,7 @@ inline void draw_monitor_live(app_state& state) {
       sorted.reserve(state.monitor_rows.size());
       for (int i = 0; i < static_cast<int>(state.monitor_rows.size()); ++i) {
         const auto& row = state.monitor_rows[i];
-        if (!frame_matches_filter(row.frame, state.filter_text, state.dbc))
+        if (!frame_matches_filter(row.frame, state.filter_text, state))
           continue;
         sorted.push_back({i, row.frame.id, row.count, row.dt_ms});
       }
@@ -261,11 +261,11 @@ inline void draw_monitor_live(app_state& state) {
 
         if (have_dbc) {
           ImGui::TableNextColumn();
-          auto msg = state.dbc.message_name(row.frame.id);
+          auto msg = state.message_name_for(row.frame.id, row.frame.source);
           if (!msg.empty()) ImGui::TextUnformatted(msg.c_str());
 
           ImGui::TableNextColumn();
-          auto decoded = state.dbc.decode(row.frame);
+          auto decoded = state.any_decode(row.frame);
           std::string sig_str;
           for (std::size_t si = 0; si < decoded.size(); ++si) {
             if (si) sig_str += "  ";
@@ -367,7 +367,7 @@ inline void draw_monitor_scrollback(app_state& state) {
         sb_filt_idx.reserve(state.scrollback.size());
         for (int i = 0; i < static_cast<int>(state.scrollback.size()); ++i) {
           if (frame_matches_filter(state.scrollback[i],
-                                   state.scrollback_filter_text, state.dbc))
+                                   state.scrollback_filter_text, state))
             sb_filt_idx.push_back(i);
         }
       }
