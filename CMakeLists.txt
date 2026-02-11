@@ -15,12 +15,7 @@ option(JCAN_ENABLE_SOCKETCAN "Build with SocketCAN support (Linux only)" ${_SOCK
 
 find_package(OpenGL REQUIRED)
 
-# libusb for Vector VN1640A support
-find_package(PkgConfig)
-if(PkgConfig_FOUND)
-    pkg_check_modules(LIBUSB IMPORTED_TARGET libusb-1.0)
-endif()
-option(JCAN_ENABLE_VECTOR "Build with Vector VN1640A USB support" ${LIBUSB_FOUND})
+option(JCAN_ENABLE_VECTOR "Build with Vector VN1640A USB support" ON)
 
 include(FetchContent)
 
@@ -105,6 +100,92 @@ elseif(APPLE)
 endif()
 
 FetchContent_Declare(
+    libusb
+    GIT_REPOSITORY https://github.com/libusb/libusb.git
+    GIT_TAG        v1.0.27
+    GIT_SHALLOW    TRUE
+)
+FetchContent_GetProperties(libusb)
+if(NOT libusb_POPULATED)
+    FetchContent_Populate(libusb)
+endif()
+
+set(LIBUSB_SOURCES
+    ${libusb_SOURCE_DIR}/libusb/core.c
+    ${libusb_SOURCE_DIR}/libusb/descriptor.c
+    ${libusb_SOURCE_DIR}/libusb/hotplug.c
+    ${libusb_SOURCE_DIR}/libusb/io.c
+    ${libusb_SOURCE_DIR}/libusb/strerror.c
+    ${libusb_SOURCE_DIR}/libusb/sync.c
+)
+if(UNIX)
+    list(APPEND LIBUSB_SOURCES
+        ${libusb_SOURCE_DIR}/libusb/os/events_posix.c
+        ${libusb_SOURCE_DIR}/libusb/os/threads_posix.c
+    )
+elseif(WIN32)
+    list(APPEND LIBUSB_SOURCES
+        ${libusb_SOURCE_DIR}/libusb/os/events_windows.c
+        ${libusb_SOURCE_DIR}/libusb/os/threads_windows.c
+    )
+endif()
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    list(APPEND LIBUSB_SOURCES
+        ${libusb_SOURCE_DIR}/libusb/os/linux_usbfs.c
+        ${libusb_SOURCE_DIR}/libusb/os/linux_netlink.c
+    )
+elseif(WIN32)
+    list(APPEND LIBUSB_SOURCES
+        ${libusb_SOURCE_DIR}/libusb/os/windows_common.c
+        ${libusb_SOURCE_DIR}/libusb/os/windows_usbdk.c
+        ${libusb_SOURCE_DIR}/libusb/os/windows_winusb.c
+    )
+elseif(APPLE)
+    list(APPEND LIBUSB_SOURCES
+        ${libusb_SOURCE_DIR}/libusb/os/darwin_usb.c
+    )
+endif()
+
+set(_lusb_config_dir "${CMAKE_CURRENT_BINARY_DIR}/lusb_config")
+file(MAKE_DIRECTORY "${_lusb_config_dir}")
+set(_lusb_cfg "")
+if(UNIX)
+    string(APPEND _lusb_cfg "#define PLATFORM_POSIX 1\n")
+    string(APPEND _lusb_cfg "#define HAVE_CLOCK_GETTIME 1\n")
+    string(APPEND _lusb_cfg "#define HAVE_EVENTFD 1\n")
+    string(APPEND _lusb_cfg "#define HAVE_TIMERFD 1\n")
+    string(APPEND _lusb_cfg "#define HAVE_PIPE2 1\n")
+    string(APPEND _lusb_cfg "#define HAVE_NFDS_T 1\n")
+    string(APPEND _lusb_cfg "#define HAVE_SYS_TIME_H 1\n")
+    string(APPEND _lusb_cfg "#define _GNU_SOURCE 1\n")
+    string(APPEND _lusb_cfg "#define DEFAULT_VISIBILITY __attribute__ ((visibility (\"default\")))\n")
+    string(APPEND _lusb_cfg "#define PRINTF_FORMAT(a, b) __attribute__ ((__format__ (__printf__, a, b)))\n")
+elseif(WIN32)
+    string(APPEND _lusb_cfg "#define PLATFORM_WINDOWS 1\n")
+    string(APPEND _lusb_cfg "#define DEFAULT_VISIBILITY /**/\n")
+    string(APPEND _lusb_cfg "#define PRINTF_FORMAT(a, b) /**/\n")
+endif()
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    string(APPEND _lusb_cfg "#define HAVE_PTHREAD_SETNAME_NP 1\n")
+    string(APPEND _lusb_cfg "#define HAVE_PTHREAD_CONDATTR_SETCLOCK 1\n")
+endif()
+string(APPEND _lusb_cfg "#define ENABLE_LOGGING 1\n")
+file(WRITE "${_lusb_config_dir}/config.h" "${_lusb_cfg}")
+
+add_library(usb_static STATIC ${LIBUSB_SOURCES})
+target_include_directories(usb_static PUBLIC ${libusb_SOURCE_DIR}/libusb)
+target_include_directories(usb_static PRIVATE ${_lusb_config_dir})
+if(UNIX)
+    target_link_libraries(usb_static PRIVATE pthread)
+endif()
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_link_libraries(usb_static PRIVATE rt)
+endif()
+if(WIN32)
+    target_compile_definitions(usb_static PRIVATE _WIN32_WINNT=0x0600 _TIMESPEC_DEFINED)
+endif()
+
+FetchContent_Declare(
     imgui
     GIT_REPOSITORY https://github.com/ocornut/imgui.git
     GIT_TAG        v1.91.8-docking
@@ -169,7 +250,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_compile_definitions(jcan_core PUBLIC JCAN_HAS_SOCKETCAN=1)
 endif()
 
-if(JCAN_ENABLE_VECTOR AND LIBUSB_FOUND)
+if(JCAN_ENABLE_VECTOR)
     # Embed VN1640A firmware blobs via .incbin assembly directive
     set(JCAN_FW_MAIN_BIN "${CMAKE_CURRENT_SOURCE_DIR}/firmware/vn1640a_main_fw.bin")
     set(JCAN_FW_FPGA_BIN "${CMAKE_CURRENT_SOURCE_DIR}/firmware/vn1640a_fpga.bin")
@@ -184,7 +265,7 @@ if(JCAN_ENABLE_VECTOR AND LIBUSB_FOUND)
         @ONLY
     )
     target_sources(jcan_core PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/firmware_blobs.S)
-    target_link_libraries(jcan_core PUBLIC PkgConfig::LIBUSB)
+    target_link_libraries(jcan_core PUBLIC usb_static)
     target_compile_definitions(jcan_core PUBLIC JCAN_HAS_VECTOR=1)
     target_compile_definitions(jcan_core PUBLIC JCAN_HAS_KVASER=1)
 endif()

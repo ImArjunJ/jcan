@@ -18,8 +18,8 @@ jobs:
       - name: install deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake pkg-config \
-            libusb-1.0-0-dev libgl-dev libxrandr-dev libxinerama-dev \
+          sudo apt-get install -y build-essential cmake \
+            libgl-dev libxrandr-dev libxinerama-dev \
             libxcursor-dev libxi-dev libxkbcommon-dev libdbus-1-dev \
             libwayland-dev wayland-protocols libdecor-0-dev libgtk-3-dev
 
@@ -50,7 +50,6 @@ jobs:
 
       - name: install deps
         run: |
-          vcpkg install libusb:x64-windows
           choco install ninja -y
 
       - name: build
@@ -60,8 +59,7 @@ jobs:
           set CC=clang-cl
           set CXX=clang-cl
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release ^
-            -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl ^
-            -DCMAKE_TOOLCHAIN_FILE=%VCPKG_INSTALLATION_ROOT%/scripts/buildsystems/vcpkg.cmake
+            -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl
           cmake --build build -j %NUMBER_OF_PROCESSORS%
 
       - name: package
