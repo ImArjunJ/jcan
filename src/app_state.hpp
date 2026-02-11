@@ -22,6 +22,7 @@
 struct ImFont;
 #include "logger.hpp"
 #include "permissions.hpp"
+#include "signal_store.hpp"
 #include "tx_scheduler.hpp"
 #include "types.hpp"
 
@@ -169,6 +170,7 @@ struct app_state {
   bool show_signals{true};
   bool show_transmitter{true};
   bool show_statistics{true};
+  bool show_plotter{true};
   ImFont* mono_font{nullptr};
 
   can_frame::clock::time_point first_frame_time{};
@@ -180,6 +182,7 @@ struct app_state {
   tx_scheduler tx_sched;
 
   frame_logger logger;
+  signal_store signals;
   frame_buffer<8192> replay_buf;
   std::optional<std::jthread> replay_thread;
   std::atomic<bool> replaying{false};
@@ -319,6 +322,15 @@ struct app_state {
                 static_cast<long>(scrollback.size() - k_max_scrollback));
       logger.log(f);
 
+      if (dbc.has_message(f.id)) {
+        auto decoded = dbc.decode(f);
+        for (const auto& sig : decoded) {
+          signals.push(signal_key{.msg_id = f.id, .name = sig.name},
+                       f.timestamp, sig.value, sig.unit, sig.minimum,
+                       sig.maximum);
+        }
+      }
+
       if (!monitor_freeze) {
         bool found = false;
         for (auto& row : monitor_rows) {
@@ -407,7 +419,77 @@ struct app_state {
     frozen_rows.clear();
     scrollback.clear();
     stats.reset();
+    signals.clear();
     has_first_frame = false;
+  }
+
+  float import_log(std::vector<std::pair<int64_t, can_frame>> frames) {
+    if (frames.empty()) return 0.f;
+    clear_monitor();
+
+    // Compute log duration
+    int64_t first_ts = frames.front().first;
+    int64_t last_ts = frames.back().first;
+    double duration_sec = static_cast<double>(last_ts - first_ts) / 1e6;
+    if (duration_sec < 0.1) duration_sec = 1.0;
+
+    if (duration_sec > signals.max_seconds()) {
+      signals.set_max_seconds(duration_sec * 1.1);
+    }
+
+    auto now = can_frame::clock::now();
+    auto log_duration = std::chrono::microseconds(last_ts - first_ts);
+    auto base_time = now - log_duration;
+
+    for (auto& [ts_us, f] : frames) {
+      f.timestamp = base_time + std::chrono::microseconds(ts_us - first_ts);
+
+      if (!has_first_frame) {
+        first_frame_time = f.timestamp;
+        has_first_frame = true;
+      }
+
+      stats.record(f);
+      if (f.error) continue;
+
+      scrollback.push_back(f);
+
+      // Decode signals
+      if (dbc.has_message(f.id)) {
+        auto decoded = dbc.decode(f);
+        for (const auto& sig : decoded) {
+          signals.push(signal_key{.msg_id = f.id, .name = sig.name},
+                       f.timestamp, sig.value, sig.unit, sig.minimum,
+                       sig.maximum);
+        }
+      }
+
+      // Update monitor rows
+      bool found = false;
+      for (auto& row : monitor_rows) {
+        if (row.frame.id == f.id && row.frame.extended == f.extended &&
+            row.frame.source == f.source) {
+          auto dt = f.timestamp - row.frame.timestamp;
+          row.dt_ms = std::chrono::duration<float, std::milli>(dt).count();
+          row.frame = f;
+          row.count++;
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        monitor_rows.push_back({.frame = f, .count = 1, .dt_ms = 0.f});
+      }
+    }
+
+    // Trim scrollback if over limit
+    if (scrollback.size() > k_max_scrollback)
+      scrollback.erase(
+          scrollback.begin(),
+          scrollback.begin() +
+              static_cast<long>(scrollback.size() - k_max_scrollback));
+
+    return static_cast<float>(duration_sec);
   }
 };
 

@@ -15,6 +15,7 @@ struct settings {
   bool show_signals{true};
   bool show_transmitter{true};
   bool show_statistics{true};
+  bool show_plotter{true};
   int window_width{1280};
   int window_height{800};
   float ui_scale{1.0f};
@@ -58,6 +59,7 @@ struct settings {
     ofs << "show_signals=" << (show_signals ? 1 : 0) << "\n";
     ofs << "show_transmitter=" << (show_transmitter ? 1 : 0) << "\n";
     ofs << "show_statistics=" << (show_statistics ? 1 : 0) << "\n";
+    ofs << "show_plotter=" << (show_plotter ? 1 : 0) << "\n";
     ofs << "window_width=" << window_width << "\n";
     ofs << "window_height=" << window_height << "\n";
     ofs << "ui_scale=" << ui_scale << "\n";
@@ -113,6 +115,7 @@ struct settings {
     show_signals = get_int("show_signals", 1) != 0;
     show_transmitter = get_int("show_transmitter", 1) != 0;
     show_statistics = get_int("show_statistics", 1) != 0;
+    show_plotter = get_int("show_plotter", 1) != 0;
     window_width = get_int("window_width", 1280);
     window_height = get_int("window_height", 800);
     {

@@ -17,6 +17,7 @@
 #include "settings.hpp"
 #include "widgets/connection.hpp"
 #include "widgets/monitor.hpp"
+#include "widgets/plotter.hpp"
 #include "widgets/signals.hpp"
 #include "widgets/statistics.hpp"
 #include "widgets/transmitter.hpp"
@@ -31,6 +32,7 @@ enum class dialog_id {
   save_csv,
   save_asc,
   open_replay,
+  import_log,
   export_log
 };
 
@@ -86,6 +88,7 @@ static void setup_default_layout(ImGuiID dockspace_id) {
 
   ImGui::DockBuilderDockWindow("Bus Monitor - Live", top);
   ImGui::DockBuilderDockWindow("Signals", top);
+  ImGui::DockBuilderDockWindow("Analysis", top);
   ImGui::DockBuilderDockWindow("Bus Monitor - Scrollback", bot_left);
   ImGui::DockBuilderDockWindow("Bus Statistics", bot_left);
   ImGui::DockBuilderDockWindow("Transmitter", bot_right);
@@ -181,6 +184,7 @@ int main() {
   state.show_signals = settings.show_signals;
   state.show_transmitter = settings.show_transmitter;
   state.show_statistics = settings.show_statistics;
+  state.show_plotter = settings.show_plotter;
 
   state.devices = jcan::discover_adapters();
 
@@ -216,6 +220,7 @@ int main() {
   bool first_frame = true;
   bool was_focused = true;
   float pending_scale = 0.f;
+  jcan::widgets::plotter_state plotter;
 
   while (!glfwWindowShouldClose(window)) {
     glfwPollEvents();
@@ -325,6 +330,11 @@ int main() {
             pending_dialog = dialog_id::export_log;
           }
         }
+        if (ImGui::MenuItem("Import Log...", "Ctrl+I", false,
+                            !file_dialog.busy())) {
+          file_dialog.open_file({{"CSV / ASC Log", "csv,asc"}});
+          pending_dialog = dialog_id::import_log;
+        }
         if (!state.replaying.load()) {
           if (ImGui::MenuItem("Replay Log...", nullptr, false,
                               !file_dialog.busy())) {
@@ -366,6 +376,7 @@ int main() {
       }
       if (ImGui::BeginMenu("View")) {
         ImGui::MenuItem("Signals", nullptr, &state.show_signals);
+        ImGui::MenuItem("Analysis", nullptr, &state.show_plotter);
         ImGui::MenuItem("Transmitter", nullptr, &state.show_transmitter);
         ImGui::MenuItem("Bus Statistics", nullptr, &state.show_statistics);
         ImGui::Separator();
@@ -455,6 +466,10 @@ int main() {
         state.logger.stop();
       }
     }
+    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_I) && !file_dialog.busy()) {
+      file_dialog.open_file({{"CSV / ASC Log", "csv,asc"}});
+      pending_dialog = dialog_id::import_log;
+    }
 
     if (auto result = file_dialog.poll()) {
       switch (pending_dialog) {
@@ -492,6 +507,30 @@ int main() {
               state.status_text = "Export failed!";
           }
           break;
+        case dialog_id::import_log:
+          if (*result) {
+            auto& path_str = **result;
+            std::vector<std::pair<int64_t, jcan::can_frame>> frames;
+            if (path_str.size() >= 4 &&
+                path_str.substr(path_str.size() - 4) == ".asc")
+              frames = jcan::frame_logger::load_asc(path_str);
+            else
+              frames = jcan::frame_logger::load_csv(path_str);
+            if (!frames.empty()) {
+              float dur = state.import_log(std::move(frames));
+              state.status_text = std::format("Imported {} frames ({:.1f}s)",
+                                              state.scrollback.size(), dur);
+              // Zoom all charts to show the full imported data
+              for (auto& c : plotter.charts) {
+                c.view_duration_sec = dur * 1.05f;  // slight padding
+                c.view_end_offset_sec = 0.0f;
+                c.live_follow = false;
+              }
+            } else {
+              state.status_text = "Import failed (no frames)";
+            }
+          }
+          break;
         default:
           break;
       }
@@ -505,6 +544,9 @@ int main() {
     jcan::widgets::draw_monitor_scrollback(state);
 
     if (state.show_signals) jcan::widgets::draw_signals(state);
+    if (state.show_plotter) {
+      jcan::widgets::draw_plotter(state, plotter);
+    }
     if (state.show_transmitter) jcan::widgets::draw_transmitter(state);
     if (state.show_statistics) jcan::widgets::draw_statistics(state);
 
@@ -525,6 +567,7 @@ int main() {
     settings.show_signals = state.show_signals;
     settings.show_transmitter = state.show_transmitter;
     settings.show_statistics = state.show_statistics;
+    settings.show_plotter = state.show_plotter;
     settings.ui_scale = state.ui_scale;
     settings.dbc_paths = state.dbc_paths;
     if (!state.adapter_slots.empty())
