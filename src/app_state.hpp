@@ -170,6 +170,7 @@ struct app_state {
     can_frame frame;
     uint64_t count{1};
     float dt_ms{0.f};
+    float sig_height{0.f};
   };
   std::vector<frame_row> monitor_rows;
   std::vector<frame_row> frozen_rows;
@@ -182,6 +183,7 @@ struct app_state {
 
   bool show_connection_modal{true};
   bool show_demo_window{false};
+  bool show_signals{true};
   bool show_signal_watcher{true};
   bool show_transmitter{true};
   bool show_statistics{true};

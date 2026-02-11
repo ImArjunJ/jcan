@@ -272,7 +272,45 @@ inline void draw_monitor_live(app_state& state) {
             sig_str += std::format("{}={:.2f}{}", decoded[si].name,
                                    decoded[si].value, decoded[si].unit);
           }
-          ImGui::TextWrapped("%s", sig_str.c_str());
+          float line_h = ImGui::GetTextLineHeight();
+          float min_h = line_h;
+          auto& row_ref = state.monitor_rows[sr.idx];
+          float cell_h =
+              (row_ref.sig_height > 0.f) ? row_ref.sig_height : min_h;
+          auto child_id = std::format("##sig_child_{}", sr.idx);
+          ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+          ImGui::BeginChild(
+              child_id.c_str(), ImVec2(0, cell_h), false,
+              ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollbar);
+          if (ImGui::IsWindowHovered() &&
+              std::abs(ImGui::GetIO().MouseWheel) > 0.f)
+            ImGui::SetScrollX(ImGui::GetScrollX() -
+                              ImGui::GetIO().MouseWheel * 40.f);
+          if (cell_h > min_h + 1.f) {
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextUnformatted(sig_str.c_str());
+            ImGui::PopTextWrapPos();
+          } else {
+            ImGui::TextUnformatted(sig_str.c_str());
+          }
+          ImGui::EndChild();
+          ImGui::PopStyleVar();
+          {
+            ImVec2 rmin = ImGui::GetItemRectMin();
+            ImVec2 rmax = ImGui::GetItemRectMax();
+            ImVec2 mouse = ImGui::GetIO().MousePos;
+            bool near_edge =
+                (mouse.x >= rmin.x && mouse.x <= rmax.x &&
+                 mouse.y >= rmax.y - 5.f && mouse.y <= rmax.y + 5.f);
+            static int dragging_row = -1;
+            if (near_edge && ImGui::IsMouseClicked(0)) dragging_row = sr.idx;
+            if (!ImGui::IsMouseDown(0)) dragging_row = -1;
+            if (near_edge || dragging_row == sr.idx)
+              ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+            if (dragging_row == sr.idx)
+              row_ref.sig_height =
+                  std::max(cell_h + ImGui::GetIO().MouseDelta.y, min_h);
+          }
         }
 
         ImGui::TableNextColumn();

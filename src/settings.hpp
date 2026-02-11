@@ -12,6 +12,7 @@ struct settings {
   int selected_bitrate{6};
   std::string last_adapter_port;
   std::string last_dbc_path;
+  bool show_signals{true};
   bool show_signal_watcher{true};
   bool show_transmitter{true};
   bool show_statistics{true};
@@ -47,6 +48,7 @@ struct settings {
     ofs << "selected_bitrate=" << selected_bitrate << "\n";
     ofs << "last_adapter_port=" << last_adapter_port << "\n";
     ofs << "last_dbc_path=" << last_dbc_path << "\n";
+    ofs << "show_signals=" << (show_signals ? 1 : 0) << "\n";
     ofs << "show_signal_watcher=" << (show_signal_watcher ? 1 : 0) << "\n";
     ofs << "show_transmitter=" << (show_transmitter ? 1 : 0) << "\n";
     ofs << "show_statistics=" << (show_statistics ? 1 : 0) << "\n";
@@ -87,6 +89,7 @@ struct settings {
     selected_bitrate = get_int("selected_bitrate", 6);
     last_adapter_port = get_str("last_adapter_port");
     last_dbc_path = get_str("last_dbc_path");
+    show_signals = get_int("show_signals", 1) != 0;
     show_signal_watcher = get_int("show_signal_watcher", 1) != 0;
     show_transmitter = get_int("show_transmitter", 1) != 0;
     show_statistics = get_int("show_statistics", 1) != 0;

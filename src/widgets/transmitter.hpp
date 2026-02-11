@@ -3,6 +3,7 @@
 #include <imgui.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <format>
 #include <string>
@@ -228,9 +229,19 @@ inline void draw_transmitter(app_state& state) {
           if (state.mono_font) ImGui::PopFont();
         } else {
           auto sigs = state.dbc.signal_infos(job.msg_id);
+
+          float label_w = 0.f;
+          for (const auto& si : sigs) {
+            auto lbl = si.unit.empty()
+                           ? si.name
+                           : std::format("{} ({})", si.name, si.unit);
+            float w = ImGui::CalcTextSize(lbl.c_str()).x;
+            if (w > label_w) label_w = w;
+          }
+          label_w = std::min(label_w + 12.f, 220.f);
+
           for (const auto& si : sigs) {
             auto& val = job.signal_values[si.name];
-            float fval = static_cast<float>(val);
 
             float fmin = static_cast<float>(si.minimum);
             float fmax = static_cast<float>(si.maximum);
@@ -252,23 +263,44 @@ inline void draw_transmitter(app_state& state) {
                              ? si.name
                              : std::format("{} ({})", si.name, si.unit);
 
-            ImGui::Text("%s", label.c_str());
-            ImGui::SameLine(180.f);
-            ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 110.f);
+            bool is_bool =
+                (si.bit_size == 1 && si.factor == 1.0 && si.offset == 0.0);
+            bool is_integer = !is_bool && std::floor(si.factor) == si.factor &&
+                              std::floor(si.offset) == si.offset;
+
+            ImGui::TextUnformatted(label.c_str());
+            ImGui::SameLine(label_w);
             auto slider_id = std::format("##sig_{}", si.name);
-            if (ImGui::SliderFloat(slider_id.c_str(), &fval, fmin, fmax,
-                                   "%.3f")) {
-              val = static_cast<double>(fval);
+
+            if (is_bool) {
+              bool bval = (val != 0.0);
+              if (ImGui::Checkbox(slider_id.c_str(), &bval))
+                val = bval ? 1.0 : 0.0;
+            } else if (is_integer) {
+              int ival = static_cast<int>(val);
+              int imin = static_cast<int>(fmin);
+              int imax = static_cast<int>(fmax);
+              ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 100.f);
+              if (ImGui::SliderInt(slider_id.c_str(), &ival, imin, imax))
+                val = static_cast<double>(ival);
+            } else {
+              float fval = static_cast<float>(val);
+              ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 100.f);
+              if (ImGui::SliderFloat(slider_id.c_str(), &fval, fmin, fmax,
+                                     "%.3f"))
+                val = static_cast<double>(fval);
             }
 
-            ImGui::SameLine();
-            auto raw_factor = (si.factor != 0.0) ? si.factor : 1.0;
-            auto raw_val = static_cast<int64_t>((val - si.offset) / raw_factor);
-            auto raw_id = std::format("##raw_{}", si.name);
-            ImGui::SetNextItemWidth(90.f);
-            if (ImGui::InputScalar(raw_id.c_str(), ImGuiDataType_S64,
-                                   &raw_val)) {
-              val = static_cast<double>(raw_val) * si.factor + si.offset;
+            if (!is_bool) {
+              ImGui::SameLine();
+              auto raw_factor = (si.factor != 0.0) ? si.factor : 1.0;
+              auto raw_val =
+                  static_cast<int64_t>((val - si.offset) / raw_factor);
+              auto raw_id = std::format("##raw_{}", si.name);
+              ImGui::SetNextItemWidth(90.f);
+              if (ImGui::InputScalar(raw_id.c_str(), ImGuiDataType_S64,
+                                     &raw_val))
+                val = static_cast<double>(raw_val) * si.factor + si.offset;
             }
           }
 

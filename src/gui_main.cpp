@@ -17,6 +17,7 @@
 #include "widgets/connection.hpp"
 #include "widgets/monitor.hpp"
 #include "widgets/signal_watcher.hpp"
+#include "widgets/signals.hpp"
 #include "widgets/statistics.hpp"
 #include "widgets/transmitter.hpp"
 
@@ -68,6 +69,7 @@ static void setup_default_layout(ImGuiID dockspace_id) {
 
   ImGui::DockBuilderDockWindow("Connection", left);
   ImGui::DockBuilderDockWindow("Bus Monitor - Live", right_top);
+  ImGui::DockBuilderDockWindow("Signals", right_top);
   ImGui::DockBuilderDockWindow("Bus Monitor - Scrollback", bot_left);
   ImGui::DockBuilderDockWindow("Bus Statistics", bot_left);
   ImGui::DockBuilderDockWindow("Signal Watcher", bot_right);
@@ -157,6 +159,7 @@ int main() {
   state.mono_font = mono_font;
 
   state.selected_bitrate = settings.selected_bitrate;
+  state.show_signals = settings.show_signals;
   state.show_signal_watcher = settings.show_signal_watcher;
   state.show_transmitter = settings.show_transmitter;
   state.show_statistics = settings.show_statistics;
@@ -314,6 +317,7 @@ int main() {
         ImGui::EndMenu();
       }
       if (ImGui::BeginMenu("View")) {
+        ImGui::MenuItem("Signals", nullptr, &state.show_signals);
         ImGui::MenuItem("Signal Watcher", nullptr, &state.show_signal_watcher);
         ImGui::MenuItem("Transmitter", nullptr, &state.show_transmitter);
         ImGui::MenuItem("Bus Statistics", nullptr, &state.show_statistics);
@@ -384,6 +388,7 @@ int main() {
     jcan::widgets::draw_monitor_live(state);
     jcan::widgets::draw_monitor_scrollback(state);
 
+    if (state.show_signals) jcan::widgets::draw_signals(state);
     if (state.show_signal_watcher) jcan::widgets::draw_signal_watcher(state);
     if (state.show_transmitter) jcan::widgets::draw_transmitter(state);
     if (state.show_statistics) jcan::widgets::draw_statistics(state);
@@ -403,6 +408,7 @@ int main() {
 
   {
     settings.selected_bitrate = state.selected_bitrate;
+    settings.show_signals = state.show_signals;
     settings.show_signal_watcher = state.show_signal_watcher;
     settings.show_transmitter = state.show_transmitter;
     settings.show_statistics = state.show_statistics;
