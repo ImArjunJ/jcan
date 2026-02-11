@@ -19,6 +19,18 @@ struct settings {
   int window_width{1280};
   int window_height{800};
   float ui_scale{1.0f};
+  std::string log_dir;  // auto-log directory; empty = default ~/jcan_logs/
+
+  static std::filesystem::path default_log_dir() {
+    const char* home = std::getenv("HOME");
+    if (!home) home = "/tmp";
+    return std::filesystem::path(home) / "jcan_logs";
+  }
+
+  std::filesystem::path effective_log_dir() const {
+    if (!log_dir.empty()) return log_dir;
+    return default_log_dir();
+  }
 
   static std::filesystem::path config_dir() {
     const char* xdg = std::getenv("XDG_CONFIG_HOME");
@@ -63,6 +75,7 @@ struct settings {
     ofs << "window_width=" << window_width << "\n";
     ofs << "window_height=" << window_height << "\n";
     ofs << "ui_scale=" << ui_scale << "\n";
+    ofs << "log_dir=" << log_dir << "\n";
 
     return true;
   }
@@ -129,6 +142,7 @@ struct settings {
         if (ui_scale > 3.0f) ui_scale = 3.0f;
       }
     }
+    log_dir = get_str("log_dir");
 
     return true;
   }

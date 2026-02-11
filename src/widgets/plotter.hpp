@@ -19,9 +19,32 @@ struct plotter_state {
   channel_list_state channel_list;
   int active_chart{0};  // which chart new signals get added to
 
+  // Shared time axis — all charts stay in sync
+  bool shared_live{true};
+  float shared_duration{10.0f};
+  float shared_offset{0.0f};
+  signal_sample::clock::time_point shared_pause_time{};
+
   plotter_state() {
     // Start with one empty chart
     charts.emplace_back();
+  }
+
+  /// Copy shared time axis into a chart before drawing.
+  void sync_to_chart(strip_chart_state& c) const {
+    c.live_follow = shared_live;
+    c.view_duration_sec = shared_duration;
+    c.view_end_offset_sec = shared_offset;
+    c.pause_time = shared_pause_time;
+  }
+
+  /// Copy a chart's time axis back after drawing (interaction may have changed
+  /// it).
+  void sync_from_chart(const strip_chart_state& c) {
+    shared_live = c.live_follow;
+    shared_duration = c.view_duration_sec;
+    shared_offset = c.view_end_offset_sec;
+    shared_pause_time = c.pause_time;
   }
 };
 
@@ -43,7 +66,6 @@ inline void toggle_signal(plotter_state& ps, const signal_key& key) {
       std::clamp(ps.active_chart, 0, static_cast<int>(ps.charts.size()) - 1);
   auto& chart = ps.charts[static_cast<std::size_t>(idx)];
 
-  // Check if already on this chart
   for (auto it = chart.traces.begin(); it != chart.traces.end(); ++it) {
     if (it->key == key) {
       chart.traces.erase(it);
@@ -90,7 +112,6 @@ inline void draw_plotter(app_state& state, plotter_state& ps) {
 
   ImGui::SameLine();
 
-  // --- Charts area (no scroll — charts fill the space exactly) ---
   if (ImGui::BeginChild(
           "##charts_area", ImVec2(0, 0), false,
           ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
@@ -107,10 +128,10 @@ inline void draw_plotter(app_state& state, plotter_state& ps) {
     // Pause / Live toggle
     if (!ps.charts.empty()) {
       ImGui::SameLine();
-      if (ps.charts[0].live_follow) {
+      if (ps.shared_live) {
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.5f, 0.2f, 0.7f));
         if (ImGui::SmallButton("LIVE")) {
-          for (auto& c : ps.charts) c.live_follow = false;
+          ps.shared_live = false;
         }
         ImGui::PopStyleColor();
         if (ImGui::IsItemHovered())
@@ -118,10 +139,8 @@ inline void draw_plotter(app_state& state, plotter_state& ps) {
       } else {
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.6f, 0.3f, 0.1f, 0.7f));
         if (ImGui::SmallButton("PAUSED")) {
-          for (auto& c : ps.charts) {
-            c.live_follow = true;
-            c.view_end_offset_sec = 0.0f;
-          }
+          ps.shared_live = true;
+          ps.shared_offset = 0.0f;
         }
         ImGui::PopStyleColor();
         if (ImGui::IsItemHovered())
@@ -131,14 +150,11 @@ inline void draw_plotter(app_state& state, plotter_state& ps) {
 
     ImGui::Separator();
 
-    // Draw each chart — divide available space evenly
     int n_charts = static_cast<int>(ps.charts.size());
     if (n_charts == 0) {
       ImGui::TextDisabled("Click '+ Chart' or select signals from the sidebar");
     } else {
       float avail_h = ImGui::GetContentRegionAvail().y;
-      // Each chart has: header line (~ImGui::GetFrameHeight) + canvas + legend
-      // line (~ImGui::GetTextLineHeightWithSpacing) + spacing
       float header_h = ImGui::GetFrameHeight() + 2.0f;
       float legend_h = ImGui::GetTextLineHeightWithSpacing() + 2.0f;
       float per_chart_overhead = header_h + legend_h;
@@ -150,6 +166,9 @@ inline void draw_plotter(app_state& state, plotter_state& ps) {
         auto& chart = ps.charts[static_cast<std::size_t>(ci)];
 
         ImGui::PushID(ci);
+
+        // Push shared time axis into chart before drawing
+        ps.sync_to_chart(chart);
 
         // Chart header — thin selectable bar instead of collapsing header
         bool is_active = (ci == ps.active_chart);
@@ -168,7 +187,6 @@ inline void draw_plotter(app_state& state, plotter_state& ps) {
           }
           if (is_active) ImGui::PopStyleColor();
 
-          // Drop target on header — drop signal onto this chart
           if (ImGui::BeginDragDropTarget()) {
             if (const auto* payload =
                     ImGui::AcceptDragDropPayload("SIGNAL_KEY")) {
@@ -207,6 +225,10 @@ inline void draw_plotter(app_state& state, plotter_state& ps) {
 
         draw_strip_chart(chart, state.signals, chart_h);
 
+        // Pull time axis back — if user interacted with this chart, it updates
+        // shared state
+        ps.sync_from_chart(chart);
+
         ImGui::PopID();
       }
     }
@@ -214,24 +236,20 @@ inline void draw_plotter(app_state& state, plotter_state& ps) {
     // Keyboard: Space to toggle live
     if (ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows) &&
         ImGui::IsKeyPressed(ImGuiKey_Space)) {
-      for (auto& c : ps.charts) {
-        if (c.live_follow) {
-          c.live_follow = false;
-        } else {
-          c.live_follow = true;
-          c.view_end_offset_sec = 0.0f;
-        }
+      if (ps.shared_live) {
+        ps.shared_live = false;
+      } else {
+        ps.shared_live = true;
+        ps.shared_offset = 0.0f;
       }
     }
 
     // W to zoom out full
     if (ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows) &&
         ImGui::IsKeyPressed(ImGuiKey_W)) {
-      for (auto& c : ps.charts) {
-        c.view_duration_sec = static_cast<float>(state.signals.max_seconds());
-        c.view_end_offset_sec = 0.0f;
-        c.live_follow = true;
-      }
+      ps.shared_duration = static_cast<float>(state.signals.max_seconds());
+      ps.shared_offset = 0.0f;
+      ps.shared_live = true;
     }
   }
   ImGui::EndChild();

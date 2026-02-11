@@ -185,6 +185,7 @@ int main() {
   state.show_transmitter = settings.show_transmitter;
   state.show_statistics = settings.show_statistics;
   state.show_plotter = settings.show_plotter;
+  state.log_dir = settings.effective_log_dir();
 
   state.devices = jcan::discover_adapters();
 
@@ -304,25 +305,15 @@ int main() {
           }
         }
         ImGui::Separator();
-        if (!state.logger.recording()) {
-          if (ImGui::MenuItem("Start Recording (CSV)...", "Ctrl+R", false,
-                              !file_dialog.busy())) {
-            file_dialog.save_file({{"CSV Log", "csv"}}, "capture.csv");
-            pending_dialog = dialog_id::save_csv;
-          }
-          if (ImGui::MenuItem("Start Recording (ASC)...", nullptr, false,
-                              !file_dialog.busy())) {
-            file_dialog.save_file({{"Vector ASC", "asc"}}, "capture.asc");
-            pending_dialog = dialog_id::save_asc;
-          }
-        } else {
-          auto rec_label = std::format("Stop Recording ({} frames)",
-                                       state.logger.frame_count());
-          if (ImGui::MenuItem(rec_label.c_str())) {
+        if (state.logger.recording() && !state.exporting.load()) {
+          auto log_label =
+              std::format("Logging to: {} ({} frames)", state.logger.filename(),
+                          state.logger.frame_count());
+          ImGui::MenuItem(log_label.c_str(), nullptr, false, false);
+          if (ImGui::MenuItem("New Log", "Ctrl+R")) {
             state.logger.stop();
+            state.auto_start_session_log();
           }
-        }
-        if (!state.scrollback.empty() && !state.exporting.load()) {
           if (ImGui::MenuItem("Export Log...", "Ctrl+E", false,
                               !file_dialog.busy())) {
             file_dialog.save_file({{"CSV Log", "csv"}, {"Vector ASC", "asc"}},
@@ -421,7 +412,7 @@ int main() {
 
       std::string full_status;
       if (state.logger.recording())
-        full_status += std::format("[REC:{}] ", state.logger.frame_count());
+        full_status += std::format("[LOG:{}] ", state.logger.frame_count());
       if (state.exporting.load())
         full_status += std::format("[EXPORT:{:.0f}%] ",
                                    state.export_progress.load() * 100.f);
@@ -458,21 +449,16 @@ int main() {
     }
     if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Q))
       glfwSetWindowShouldClose(window, GLFW_TRUE);
+    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_R) &&
+        state.logger.recording()) {
+      state.logger.stop();
+      state.auto_start_session_log();
+    }
     if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_E) && !file_dialog.busy() &&
-        !state.scrollback.empty() && !state.exporting.load()) {
+        state.logger.recording() && !state.exporting.load()) {
       file_dialog.save_file({{"CSV Log", "csv"}, {"Vector ASC", "asc"}},
                             "export.csv");
       pending_dialog = dialog_id::export_log;
-    }
-    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_R)) {
-      if (!state.logger.recording()) {
-        if (!file_dialog.busy()) {
-          file_dialog.save_file({{"CSV Log", "csv"}}, "capture.csv");
-          pending_dialog = dialog_id::save_csv;
-        }
-      } else {
-        state.logger.stop();
-      }
     }
     if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_I) && !file_dialog.busy()) {
       file_dialog.open_file({{"CSV / ASC Log", "csv,asc"}});
@@ -489,10 +475,6 @@ int main() {
               state.status_text = "DBC load failed!";
           }
           break;
-        case dialog_id::save_csv:
-        case dialog_id::save_asc:
-          if (*result) state.logger.start(**result);
-          break;
         case dialog_id::open_replay:
           if (*result) {
             auto& path_str = **result;
@@ -508,8 +490,8 @@ int main() {
         case dialog_id::export_log:
           if (*result) {
             state.start_export(**result);
-            state.status_text =
-                std::format("Exporting {} frames...", state.scrollback.size());
+            state.status_text = std::format("Exporting {} frames...",
+                                            state.logger.frame_count());
           }
           break;
         case dialog_id::import_log:
@@ -544,7 +526,6 @@ int main() {
 
     state.poll_frames();
 
-    // Check async export completion
     if (!state.exporting.load() && !state.export_result_msg.empty()) {
       state.status_text = state.export_result_msg;
       state.export_result_msg.clear();
@@ -581,6 +562,7 @@ int main() {
     settings.show_plotter = state.show_plotter;
     settings.ui_scale = state.ui_scale;
     settings.dbc_paths = state.dbc_paths;
+    settings.log_dir = state.log_dir.string();
     if (!state.adapter_slots.empty())
       settings.last_adapter_port = state.adapter_slots[0]->desc.port;
     int w, h;

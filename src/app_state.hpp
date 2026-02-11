@@ -163,12 +163,12 @@ struct app_state {
   };
   std::vector<frame_row> monitor_rows;
   std::vector<frame_row> frozen_rows;
-  std::vector<can_frame> scrollback;
+  std::deque<can_frame> scrollback;
   bool monitor_autoscroll{true};
   bool monitor_freeze{false};
   char filter_text[64]{};
   char scrollback_filter_text[64]{};
-  static constexpr std::size_t k_max_scrollback = 50'000'000;
+  static constexpr std::size_t k_max_scrollback = 100'000;
 
   bool show_connection_modal{true};
   float ui_scale{1.0f};
@@ -187,6 +187,8 @@ struct app_state {
   tx_scheduler tx_sched;
 
   frame_logger logger;
+  std::filesystem::path log_dir;  // from settings
+  std::string session_log_path;   // current session log file
   signal_store signals;
   frame_buffer<8192> replay_buf;
   std::optional<std::jthread> replay_thread;
@@ -249,17 +251,43 @@ struct app_state {
 
   void start_export(const std::string& path) {
     if (exporting.load()) return;
-    auto frames_copy = scrollback;
-    auto base_time = first_frame_time;
+    if (session_log_path.empty() || !logger.recording()) {
+      export_result_msg = "No active session log";
+      return;
+    }
+    logger.flush();
+    auto src = session_log_path;
+    auto count = logger.frame_count();
     exporting.store(true);
     export_progress.store(0.f);
     export_result_msg.clear();
-    export_thread.emplace([this, path, frames = std::move(frames_copy),
-                           base_time](std::stop_token stop) {
-      auto ext = std::filesystem::path(path).extension().string();
-      for (auto& c : ext) c = static_cast<char>(std::tolower(c));
-      bool asc = (ext == ".asc");
 
+    export_thread.emplace([this, path, src, count](std::stop_token stop) {
+      auto dst_ext = std::filesystem::path(path).extension().string();
+      for (auto& c : dst_ext) c = static_cast<char>(std::tolower(c));
+      auto src_ext = std::filesystem::path(src).extension().string();
+      for (auto& c : src_ext) c = static_cast<char>(std::tolower(c));
+
+      if (dst_ext == src_ext) {
+        std::error_code ec;
+        std::filesystem::copy_file(
+            src, path, std::filesystem::copy_options::overwrite_existing, ec);
+        export_progress.store(1.f);
+        if (ec)
+          export_result_msg = std::format("Export failed: {}", ec.message());
+        else
+          export_result_msg = std::format("Exported {} frames (copied)", count);
+        exporting.store(false);
+        return;
+      }
+
+      std::vector<std::pair<int64_t, can_frame>> frames;
+      if (src_ext == ".asc")
+        frames = frame_logger::load_asc(src);
+      else
+        frames = frame_logger::load_csv(src);
+
+      bool asc = (dst_ext == ".asc");
       std::ofstream ofs(path, std::ios::out | std::ios::trunc);
       if (!ofs.is_open()) {
         export_result_msg = "Export failed: could not open file";
@@ -278,14 +306,11 @@ struct app_state {
 
       for (std::size_t i = 0; i < frames.size(); ++i) {
         if (stop.stop_requested()) break;
-        const auto& f = frames[i];
-        auto us = std::chrono::duration_cast<std::chrono::microseconds>(
-                      f.timestamp - base_time)
-                      .count();
+        auto& [ts_us, f] = frames[i];
         uint8_t len = frame_payload_len(f);
 
         if (asc) {
-          double seconds = static_cast<double>(us) / 1e6;
+          double seconds = static_cast<double>(ts_us) / 1e6;
           ofs << std::format("{:>12.6f}", seconds) << "  1  ";
           if (f.extended)
             ofs << std::format("{:08X}", f.id) << "x";
@@ -298,7 +323,7 @@ struct app_state {
           if (f.fd && f.brs) ofs << "  BRS";
           ofs << "\n";
         } else {
-          ofs << us << "," << (f.tx ? "Tx" : "Rx") << ",0x"
+          ofs << ts_us << "," << (f.tx ? "Tx" : "Rx") << ",0x"
               << std::format("{:03X}", f.id) << "," << (f.extended ? 1 : 0)
               << "," << (f.rtr ? 1 : 0) << "," << static_cast<int>(f.dlc) << ","
               << (f.fd ? 1 : 0) << "," << (f.brs ? 1 : 0) << ",";
@@ -309,7 +334,7 @@ struct app_state {
           ofs << "\n";
         }
 
-        if ((i & 0xFFF) == 0)  // update progress every 4096 frames
+        if ((i & 0xFFF) == 0)
           export_progress.store(static_cast<float>(i + 1) /
                                 static_cast<float>(frames.size()));
       }
@@ -380,7 +405,29 @@ struct app_state {
     if (adapter_slots.size() == 1) {
       tx_slot_idx = 0;
       tx_sched.start(adapter_slots[0]->hw);
+      if (!logger.recording()) {
+        auto_start_session_log();
+      }
     }
+  }
+
+  void auto_start_session_log() {
+    std::error_code ec;
+    std::filesystem::create_directories(log_dir, ec);
+    if (ec) {
+      status_text = std::format("Log dir error: {}", ec.message());
+      return;
+    }
+    auto now = std::chrono::system_clock::now();
+    auto tt = std::chrono::system_clock::to_time_t(now);
+    std::tm tm{};
+    localtime_r(&tt, &tm);
+    auto filename = std::format("{:04d}{:02d}{:02d}_{:02d}{:02d}{:02d}.csv",
+                                tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
+                                tm.tm_hour, tm.tm_min, tm.tm_sec);
+    auto path = log_dir / filename;
+    session_log_path = path.string();
+    logger.start_csv(path);
   }
 
   void disconnect_slot(int idx) {
@@ -443,11 +490,7 @@ struct app_state {
       if (f.error) continue;
 
       scrollback.push_back(f);
-      if (scrollback.size() > k_max_scrollback)
-        scrollback.erase(
-            scrollback.begin(),
-            scrollback.begin() +
-                static_cast<long>(scrollback.size() - k_max_scrollback));
+      while (scrollback.size() > k_max_scrollback) scrollback.pop_front();
       logger.log(f);
 
       if (dbc_for_frame(f).has_message(f.id)) {
@@ -555,7 +598,6 @@ struct app_state {
     if (frames.empty()) return 0.f;
     clear_monitor();
 
-    // Compute log duration
     int64_t first_ts = frames.front().first;
     int64_t last_ts = frames.back().first;
     double duration_sec = static_cast<double>(last_ts - first_ts) / 1e6;
@@ -582,7 +624,6 @@ struct app_state {
 
       scrollback.push_back(f);
 
-      // Decode signals
       if (dbc_for_frame(f).has_message(f.id)) {
         auto decoded = dbc_for_frame(f).decode(f);
         for (const auto& sig : decoded) {
@@ -592,7 +633,6 @@ struct app_state {
         }
       }
 
-      // Update monitor rows
       bool found = false;
       for (auto& row : monitor_rows) {
         if (row.frame.id == f.id && row.frame.extended == f.extended &&
@@ -610,12 +650,7 @@ struct app_state {
       }
     }
 
-    // Trim scrollback if over limit
-    if (scrollback.size() > k_max_scrollback)
-      scrollback.erase(
-          scrollback.begin(),
-          scrollback.begin() +
-              static_cast<long>(scrollback.size() - k_max_scrollback));
+    while (scrollback.size() > k_max_scrollback) scrollback.pop_front();
 
     return static_cast<float>(duration_sec);
   }

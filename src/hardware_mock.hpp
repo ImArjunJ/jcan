@@ -15,7 +15,6 @@ struct mock_adapter {
   bool open_{false};
   uint32_t seq_{0};
 
-  // ~10,000 msgs/sec: 100 frames per 10ms batch
   static constexpr int k_batch_size = 100;
 
   [[nodiscard]] result<> open(
@@ -69,7 +68,6 @@ struct mock_adapter {
       f.id = demo_ids[seq_ % n_ids];
       f.dlc = 8;
 
-      // Generate somewhat realistic varying data using sin waves
       double t = static_cast<double>(seq_) * 0.001;
       for (uint8_t i = 0; i < 8; ++i) {
         double wave =

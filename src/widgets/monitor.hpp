@@ -334,8 +334,13 @@ inline void draw_monitor_live(app_state& state) {
 inline void draw_monitor_scrollback(app_state& state) {
   ImGui::SetNextWindowSize(ImVec2(700, 300), ImGuiCond_FirstUseEver);
   if (ImGui::Begin("Bus Monitor - Scrollback")) {
-    ImGui::Text("Frames: %zu / %zu", state.scrollback.size(),
-                state.k_max_scrollback);
+    if (state.logger.recording()) {
+      ImGui::Text("Scrollback: %zu  |  Logged: %zu", state.scrollback.size(),
+                  state.logger.frame_count());
+    } else {
+      ImGui::Text("Scrollback: %zu / %zu", state.scrollback.size(),
+                  state.k_max_scrollback);
+    }
     ImGui::SameLine();
     ImGui::Checkbox("Auto-scroll", &state.monitor_autoscroll);
     ImGui::SameLine();

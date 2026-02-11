@@ -77,6 +77,10 @@ class frame_logger {
     recording_ = false;
   }
 
+  void flush() {
+    if (recording_) ofs_.flush();
+  }
+
   static std::vector<std::pair<int64_t, can_frame>> load_csv(
       const std::filesystem::path& path) {
     std::vector<std::pair<int64_t, can_frame>> out;

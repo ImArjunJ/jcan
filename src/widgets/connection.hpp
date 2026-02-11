@@ -18,11 +18,10 @@ inline void draw_connection_modal(app_state& state) {
 
   ImVec2 center = ImGui::GetMainViewport()->GetCenter();
   ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-  ImGui::SetNextWindowSize(ImVec2(500, 0), ImGuiCond_Appearing);
+  ImGui::SetNextWindowSizeConstraints(ImVec2(500, 0), ImVec2(500, FLT_MAX));
 
   bool modal_open = true;
-  if (ImGui::BeginPopupModal("Connection##modal", &modal_open,
-                             ImGuiWindowFlags_AlwaysAutoResize)) {
+  if (ImGui::BeginPopupModal("Connection##modal", &modal_open)) {
     if (!state.adapter_slots.empty()) {
       ImGui::Text("Connected adapters:");
       int remove_idx = -1;
@@ -46,7 +45,6 @@ inline void draw_connection_modal(app_state& state) {
         ImGui::SameLine();
         if (ImGui::SmallButton("Disconnect")) remove_idx = i;
 
-        // Per-channel DBC
         ImGui::Indent(28.0f);
         if (slot->slot_dbc.loaded()) {
           auto fnames = slot->slot_dbc.filenames();
@@ -133,6 +131,40 @@ inline void draw_connection_modal(app_state& state) {
       if (ImGui::Button("Disconnect All", ImVec2(140, 0))) {
         state.disconnect();
       }
+    }
+
+    // Log directory
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Text("Log Directory:");
+    {
+      static char log_dir_buf[512]{};
+      static bool log_dir_init = false;
+      if (!log_dir_init) {
+        std::snprintf(log_dir_buf, sizeof(log_dir_buf), "%s",
+                      state.log_dir.string().c_str());
+        log_dir_init = true;
+      }
+      ImGui::SetNextItemWidth(-80);
+      if (ImGui::InputText("##log_dir", log_dir_buf, sizeof(log_dir_buf),
+                           ImGuiInputTextFlags_EnterReturnsTrue)) {
+        state.log_dir = log_dir_buf;
+      }
+      ImGui::SameLine();
+      if (ImGui::SmallButton("Browse")) {
+        nfdchar_t* out_path = nullptr;
+        if (NFD_PickFolder(&out_path, state.log_dir.string().c_str()) ==
+            NFD_OKAY) {
+          state.log_dir = out_path;
+          std::snprintf(log_dir_buf, sizeof(log_dir_buf), "%s", out_path);
+          NFD_FreePath(out_path);
+        }
+      }
+    }
+    if (state.logger.recording()) {
+      ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "Recording:");
+      ImGui::TextWrapped("%s", state.session_log_path.c_str());
+      ImGui::Text("Frames logged: %zu", state.logger.frame_count());
     }
 
     if (!state.status_text.empty()) {
