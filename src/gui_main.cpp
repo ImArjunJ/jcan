@@ -16,7 +16,6 @@
 #include "settings.hpp"
 #include "widgets/connection.hpp"
 #include "widgets/monitor.hpp"
-#include "widgets/signal_watcher.hpp"
 #include "widgets/signals.hpp"
 #include "widgets/statistics.hpp"
 #include "widgets/transmitter.hpp"
@@ -55,24 +54,17 @@ static void setup_default_layout(ImGuiID dockspace_id) {
   ImGui::DockBuilderAddNode(dockspace_id, ImGuiDockNodeFlags_DockSpace);
   ImGui::DockBuilderSetNodeSize(dockspace_id, ImGui::GetMainViewport()->Size);
 
-  ImGuiID left, right;
-  ImGui::DockBuilderSplitNode(dockspace_id, ImGuiDir_Left, 0.25f, &left,
-                              &right);
-
-  ImGuiID right_top, right_bottom;
-  ImGui::DockBuilderSplitNode(right, ImGuiDir_Up, 0.55f, &right_top,
-                              &right_bottom);
+  ImGuiID top, bottom;
+  ImGui::DockBuilderSplitNode(dockspace_id, ImGuiDir_Up, 0.55f, &top, &bottom);
 
   ImGuiID bot_left, bot_right;
-  ImGui::DockBuilderSplitNode(right_bottom, ImGuiDir_Left, 0.60f, &bot_left,
+  ImGui::DockBuilderSplitNode(bottom, ImGuiDir_Left, 0.60f, &bot_left,
                               &bot_right);
 
-  ImGui::DockBuilderDockWindow("Connection", left);
-  ImGui::DockBuilderDockWindow("Bus Monitor - Live", right_top);
-  ImGui::DockBuilderDockWindow("Signals", right_top);
+  ImGui::DockBuilderDockWindow("Bus Monitor - Live", top);
+  ImGui::DockBuilderDockWindow("Signals", top);
   ImGui::DockBuilderDockWindow("Bus Monitor - Scrollback", bot_left);
   ImGui::DockBuilderDockWindow("Bus Statistics", bot_left);
-  ImGui::DockBuilderDockWindow("Signal Watcher", bot_right);
   ImGui::DockBuilderDockWindow("Transmitter", bot_right);
 
   ImGui::DockBuilderFinish(dockspace_id);
@@ -135,7 +127,7 @@ int main() {
   ImGui_ImplGlfw_InitForOpenGL(window, true);
   ImGui_ImplOpenGL3_Init("#version 330");
 
-  ImFont* mono_font = nullptr;
+  std::string mono_font_path;
   {
     const char* mono_paths[] = {
         "/usr/share/fonts/TTF/JetBrainsMono-Regular.ttf",
@@ -148,19 +140,37 @@ int main() {
     };
     for (const char** p = mono_paths; *p; ++p) {
       if (std::filesystem::exists(*p)) {
-        mono_font = io.Fonts->AddFontFromFileTTF(*p, 14.0f);
-        if (mono_font) break;
+        mono_font_path = *p;
+        break;
       }
     }
+  }
+
+  float current_scale = settings.ui_scale;
+  ImFont* mono_font = nullptr;
+  {
+    io.Fonts->Clear();
+    float font_size = std::round(14.0f * current_scale);
+    if (!mono_font_path.empty())
+      mono_font =
+          io.Fonts->AddFontFromFileTTF(mono_font_path.c_str(), font_size);
     io.Fonts->Build();
   }
 
   jcan::app_state state;
   state.mono_font = mono_font;
+  state.ui_scale = current_scale;
+  {
+    ImGui::GetStyle() = ImGuiStyle();
+    ImGuiStyle& s = ImGui::GetStyle();
+    s.FrameRounding = 4.0f;
+    s.GrabRounding = 3.0f;
+    s.WindowRounding = 6.0f;
+    s.ScaleAllSizes(current_scale);
+  }
 
   state.selected_bitrate = settings.selected_bitrate;
   state.show_signals = settings.show_signals;
-  state.show_signal_watcher = settings.show_signal_watcher;
   state.show_transmitter = settings.show_transmitter;
   state.show_statistics = settings.show_statistics;
 
@@ -189,6 +199,7 @@ int main() {
 
   bool first_frame = true;
   bool was_focused = true;
+  float pending_scale = 0.f;
 
   while (!glfwWindowShouldClose(window)) {
     glfwPollEvents();
@@ -205,6 +216,25 @@ int main() {
       state.poll_frames();
       std::this_thread::sleep_for(std::chrono::milliseconds(50));
       continue;
+    }
+
+    if (pending_scale > 0.f) {
+      ImGui::GetStyle() = ImGuiStyle();
+      ImGuiStyle& s = ImGui::GetStyle();
+      s.FrameRounding = 4.0f;
+      s.GrabRounding = 3.0f;
+      s.WindowRounding = 6.0f;
+      s.ScaleAllSizes(pending_scale);
+      io.Fonts->Clear();
+      float font_size = std::round(14.0f * pending_scale);
+      if (!mono_font_path.empty())
+        mono_font =
+            io.Fonts->AddFontFromFileTTF(mono_font_path.c_str(), font_size);
+      io.Fonts->Build();
+      ImGui_ImplOpenGL3_DestroyFontsTexture();
+      ImGui_ImplOpenGL3_CreateFontsTexture();
+      state.mono_font = mono_font;
+      pending_scale = 0.f;
     }
 
     ImGui_ImplOpenGL3_NewFrame();
@@ -226,7 +256,6 @@ int main() {
           if (ImGui::MenuItem("Unload DBC")) {
             state.dbc.unload();
             state.last_dbc_path.clear();
-            state.signal_watcher.traces.clear();
             state.status_text =
                 state.connected ? "DBC unloaded" : "Disconnected";
           }
@@ -308,33 +337,47 @@ int main() {
           }
         }
         ImGui::Separator();
-        if (ImGui::MenuItem("Connection...", nullptr,
-                            state.show_connection_modal))
-          state.show_connection_modal = !state.show_connection_modal;
-        ImGui::Separator();
         if (ImGui::MenuItem("Quit", "Ctrl+Q"))
           glfwSetWindowShouldClose(window, GLFW_TRUE);
         ImGui::EndMenu();
       }
       if (ImGui::BeginMenu("View")) {
         ImGui::MenuItem("Signals", nullptr, &state.show_signals);
-        ImGui::MenuItem("Signal Watcher", nullptr, &state.show_signal_watcher);
         ImGui::MenuItem("Transmitter", nullptr, &state.show_transmitter);
         ImGui::MenuItem("Bus Statistics", nullptr, &state.show_statistics);
         ImGui::Separator();
-        ImGui::MenuItem("Demo Window", nullptr, &state.show_demo_window);
+        if (ImGui::BeginMenu("UI Scale")) {
+          static constexpr float presets[] = {0.5f,  0.75f, 1.0f,
+                                              1.25f, 1.5f,  2.0f};
+          for (float p : presets) {
+            auto label = std::format("{:.2g}x", p);
+            bool selected = (std::abs(state.ui_scale - p) < 0.01f);
+            if (ImGui::MenuItem(label.c_str(), nullptr, selected)) {
+              state.ui_scale = p;
+              current_scale = p;
+              pending_scale = p;
+            }
+          }
+          ImGui::EndMenu();
+        }
         ImGui::EndMenu();
       }
 
-      ImGui::SameLine();
-      if (state.connected) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
-        if (ImGui::SmallButton("[x] Disconnect")) state.disconnect();
-        ImGui::PopStyleColor();
-      } else if (!state.devices.empty()) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.3f, 1.0f, 0.3f, 1.0f));
-        if (ImGui::SmallButton("[>] Connect")) state.connect();
-        ImGui::PopStyleColor();
+      if (ImGui::BeginMenu("Connection")) {
+        auto conn_label =
+            state.connected
+                ? std::format("Connected ({} adapter{})",
+                              state.adapter_slots.size(),
+                              state.adapter_slots.size() > 1 ? "s" : "")
+                : std::string("Not connected");
+        ImGui::TextDisabled("%s", conn_label.c_str());
+        ImGui::Separator();
+        if (ImGui::MenuItem("Open Connection Dialog..."))
+          state.show_connection_modal = true;
+        if (state.connected) {
+          if (ImGui::MenuItem("Disconnect All")) state.disconnect();
+        }
+        ImGui::EndMenu();
       }
 
       std::string full_status;
@@ -389,10 +432,8 @@ int main() {
     jcan::widgets::draw_monitor_scrollback(state);
 
     if (state.show_signals) jcan::widgets::draw_signals(state);
-    if (state.show_signal_watcher) jcan::widgets::draw_signal_watcher(state);
     if (state.show_transmitter) jcan::widgets::draw_transmitter(state);
     if (state.show_statistics) jcan::widgets::draw_statistics(state);
-    if (state.show_demo_window) ImGui::ShowDemoWindow(&state.show_demo_window);
 
     ImGui::Render();
     int display_w, display_h;
@@ -409,9 +450,9 @@ int main() {
   {
     settings.selected_bitrate = state.selected_bitrate;
     settings.show_signals = state.show_signals;
-    settings.show_signal_watcher = state.show_signal_watcher;
     settings.show_transmitter = state.show_transmitter;
     settings.show_statistics = state.show_statistics;
+    settings.ui_scale = state.ui_scale;
     settings.last_dbc_path = state.last_dbc_path;
     if (!state.adapter_slots.empty())
       settings.last_adapter_port = state.adapter_slots[0]->desc.port;

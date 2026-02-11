@@ -18,31 +18,14 @@
 #include "dbc_engine.hpp"
 #include "frame_buffer.hpp"
 #include "hardware.hpp"
+
+struct ImFont;
 #include "logger.hpp"
 #include "permissions.hpp"
 #include "tx_scheduler.hpp"
 #include "types.hpp"
 
 namespace jcan {
-
-struct signal_trace {
-  std::string name;
-  std::string unit;
-  std::deque<float> samples;
-  float last_value{0.f};
-  static constexpr int k_max_samples = 512;
-
-  void push(float v) {
-    last_value = v;
-    samples.push_back(v);
-    if (static_cast<int>(samples.size()) > k_max_samples) samples.pop_front();
-  }
-};
-
-struct signal_watcher_state {
-  std::unordered_map<std::string, signal_trace> traces;
-  bool auto_add{true};
-};
 
 struct bus_stats {
   using clock = std::chrono::steady_clock;
@@ -182,9 +165,8 @@ struct app_state {
   static constexpr std::size_t k_max_scrollback = 50'000;
 
   bool show_connection_modal{true};
-  bool show_demo_window{false};
+  float ui_scale{1.0f};
   bool show_signals{true};
-  bool show_signal_watcher{true};
   bool show_transmitter{true};
   bool show_statistics{true};
   ImFont* mono_font{nullptr};
@@ -194,7 +176,6 @@ struct app_state {
 
   dbc_engine dbc;
   std::string last_dbc_path;
-  signal_watcher_state signal_watcher;
 
   tx_scheduler tx_sched;
 

@@ -59,7 +59,10 @@ inline void draw_transmitter(app_state& state) {
             ? labels[selected_idx].c_str()
             : "Select DBC message...";
 
-    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 230.f);
+    float combo_w = ImGui::CalcTextSize(preview).x +
+                    ImGui::GetStyle().FramePadding.x * 2.f + 30.f;
+    combo_w = std::min(combo_w, ImGui::GetContentRegionAvail().x - 120.f);
+    ImGui::SetNextItemWidth(combo_w);
     if (ImGui::BeginCombo("##msg_select", preview)) {
       ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
       if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
@@ -238,70 +241,85 @@ inline void draw_transmitter(app_state& state) {
             float w = ImGui::CalcTextSize(lbl.c_str()).x;
             if (w > label_w) label_w = w;
           }
-          label_w = std::min(label_w + 12.f, 220.f);
+          label_w += ImGui::GetStyle().ItemSpacing.x;
 
-          for (const auto& si : sigs) {
-            auto& val = job.signal_values[si.name];
+          if (ImGui::BeginTable("##sigs", 2, ImGuiTableFlags_None)) {
+            ImGui::TableSetupColumn("label", ImGuiTableColumnFlags_WidthFixed,
+                                    label_w);
+            ImGui::TableSetupColumn("ctrl", ImGuiTableColumnFlags_WidthStretch);
 
-            float fmin = static_cast<float>(si.minimum);
-            float fmax = static_cast<float>(si.maximum);
-            if (fmin == fmax) {
-              fmin = si.is_signed
-                         ? -static_cast<float>(1ULL << (si.bit_size - 1))
-                         : 0.f;
-              fmax = si.is_signed
-                         ? static_cast<float>((1ULL << (si.bit_size - 1)) - 1)
-                         : static_cast<float>((1ULL << si.bit_size) - 1);
-              fmin = fmin * static_cast<float>(si.factor) +
-                     static_cast<float>(si.offset);
-              fmax = fmax * static_cast<float>(si.factor) +
-                     static_cast<float>(si.offset);
-              if (fmin > fmax) std::swap(fmin, fmax);
+            for (const auto& si : sigs) {
+              auto& val = job.signal_values[si.name];
+
+              float fmin = static_cast<float>(si.minimum);
+              float fmax = static_cast<float>(si.maximum);
+              if (fmin == fmax) {
+                fmin = si.is_signed
+                           ? -static_cast<float>(1ULL << (si.bit_size - 1))
+                           : 0.f;
+                fmax = si.is_signed
+                           ? static_cast<float>((1ULL << (si.bit_size - 1)) - 1)
+                           : static_cast<float>((1ULL << si.bit_size) - 1);
+                fmin = fmin * static_cast<float>(si.factor) +
+                       static_cast<float>(si.offset);
+                fmax = fmax * static_cast<float>(si.factor) +
+                       static_cast<float>(si.offset);
+                if (fmin > fmax) std::swap(fmin, fmax);
+              }
+
+              auto label = si.unit.empty()
+                               ? si.name
+                               : std::format("{} ({})", si.name, si.unit);
+
+              bool is_bool =
+                  (si.bit_size == 1 && si.factor == 1.0 && si.offset == 0.0);
+              bool is_integer = !is_bool &&
+                                std::floor(si.factor) == si.factor &&
+                                std::floor(si.offset) == si.offset;
+
+              ImGui::TableNextRow();
+              ImGui::TableNextColumn();
+              ImGui::AlignTextToFramePadding();
+              ImGui::TextUnformatted(label.c_str());
+
+              ImGui::TableNextColumn();
+              auto slider_id = std::format("##sig_{}", si.name);
+
+              if (is_bool) {
+                bool bval = (val != 0.0);
+                if (ImGui::Checkbox(slider_id.c_str(), &bval))
+                  val = bval ? 1.0 : 0.0;
+              } else if (is_integer) {
+                int ival = static_cast<int>(val);
+                int imin = static_cast<int>(fmin);
+                int imax = static_cast<int>(fmax);
+                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x -
+                                        100.f);
+                if (ImGui::SliderInt(slider_id.c_str(), &ival, imin, imax))
+                  val = static_cast<double>(ival);
+              } else {
+                float fval = static_cast<float>(val);
+                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x -
+                                        100.f);
+                if (ImGui::SliderFloat(slider_id.c_str(), &fval, fmin, fmax,
+                                       "%.3f"))
+                  val = static_cast<double>(fval);
+              }
+
+              if (!is_bool) {
+                ImGui::SameLine();
+                auto raw_factor = (si.factor != 0.0) ? si.factor : 1.0;
+                auto raw_val =
+                    static_cast<int64_t>((val - si.offset) / raw_factor);
+                auto raw_id = std::format("##raw_{}", si.name);
+                ImGui::SetNextItemWidth(90.f);
+                if (ImGui::InputScalar(raw_id.c_str(), ImGuiDataType_S64,
+                                       &raw_val))
+                  val = static_cast<double>(raw_val) * si.factor + si.offset;
+              }
             }
 
-            auto label = si.unit.empty()
-                             ? si.name
-                             : std::format("{} ({})", si.name, si.unit);
-
-            bool is_bool =
-                (si.bit_size == 1 && si.factor == 1.0 && si.offset == 0.0);
-            bool is_integer = !is_bool && std::floor(si.factor) == si.factor &&
-                              std::floor(si.offset) == si.offset;
-
-            ImGui::TextUnformatted(label.c_str());
-            ImGui::SameLine(label_w);
-            auto slider_id = std::format("##sig_{}", si.name);
-
-            if (is_bool) {
-              bool bval = (val != 0.0);
-              if (ImGui::Checkbox(slider_id.c_str(), &bval))
-                val = bval ? 1.0 : 0.0;
-            } else if (is_integer) {
-              int ival = static_cast<int>(val);
-              int imin = static_cast<int>(fmin);
-              int imax = static_cast<int>(fmax);
-              ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 100.f);
-              if (ImGui::SliderInt(slider_id.c_str(), &ival, imin, imax))
-                val = static_cast<double>(ival);
-            } else {
-              float fval = static_cast<float>(val);
-              ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 100.f);
-              if (ImGui::SliderFloat(slider_id.c_str(), &fval, fmin, fmax,
-                                     "%.3f"))
-                val = static_cast<double>(fval);
-            }
-
-            if (!is_bool) {
-              ImGui::SameLine();
-              auto raw_factor = (si.factor != 0.0) ? si.factor : 1.0;
-              auto raw_val =
-                  static_cast<int64_t>((val - si.offset) / raw_factor);
-              auto raw_id = std::format("##raw_{}", si.name);
-              ImGui::SetNextItemWidth(90.f);
-              if (ImGui::InputScalar(raw_id.c_str(), ImGuiDataType_S64,
-                                     &raw_val))
-                val = static_cast<double>(raw_val) * si.factor + si.offset;
-            }
+            ImGui::EndTable();
           }
 
           job.frame = state.dbc.encode(job.msg_id, job.signal_values);

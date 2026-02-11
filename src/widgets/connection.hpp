@@ -10,16 +10,18 @@
 namespace jcan::widgets {
 
 inline void draw_connection_modal(app_state& state) {
-  if (!state.connected) {
-    if (!state.show_connection_modal) {
-      state.show_connection_modal = true;
-    }
+  if (state.show_connection_modal) {
+    ImGui::OpenPopup("Connection##modal");
+    state.show_connection_modal = false;
   }
 
-  if (!state.show_connection_modal) return;
+  ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+  ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+  ImGui::SetNextWindowSize(ImVec2(500, 0), ImGuiCond_Appearing);
 
-  ImGui::SetNextWindowSize(ImVec2(480, 400), ImGuiCond_FirstUseEver);
-  if (ImGui::Begin("Connection", &state.show_connection_modal)) {
+  bool modal_open = true;
+  if (ImGui::BeginPopupModal("Connection##modal", &modal_open,
+                             ImGuiWindowFlags_AlwaysAutoResize)) {
     if (!state.adapter_slots.empty()) {
       ImGui::Text("Connected adapters:");
       int remove_idx = -1;
@@ -49,7 +51,7 @@ inline void draw_connection_modal(app_state& state) {
       ImGui::Separator();
     }
 
-    if (ImGui::Button("Scan for adapters")) {
+    if (ImGui::Button("Scan")) {
       state.devices = discover_adapters();
       if (!state.devices.empty()) state.selected_device = 0;
     }
@@ -77,7 +79,7 @@ inline void draw_connection_modal(app_state& state) {
         ImGui::EndListBox();
       }
     } else {
-      ImGui::TextWrapped("No adapters found. Click 'Scan for adapters'.");
+      ImGui::TextWrapped("No adapters found. Click 'Scan'.");
     }
 
     ImGui::Spacing();
@@ -87,6 +89,7 @@ inline void draw_connection_modal(app_state& state) {
         "S3 - 100 kbit/s", "S4 - 125 kbit/s", "S5 - 250 kbit/s",
         "S6 - 500 kbit/s", "S7 - 800 kbit/s", "S8 - 1 Mbit/s",
     };
+    ImGui::SetNextItemWidth(250);
     ImGui::Combo("Bitrate", &state.selected_bitrate, bitrate_labels,
                  IM_ARRAYSIZE(bitrate_labels));
 
@@ -98,16 +101,21 @@ inline void draw_connection_modal(app_state& state) {
       state.connect();
     }
     if (!can_connect) ImGui::EndDisabled();
+
     if (state.adapter_slots.size() > 1) {
       ImGui::SameLine();
       if (ImGui::Button("Disconnect All", ImVec2(140, 0))) {
         state.disconnect();
       }
     }
-    ImGui::SameLine();
-    ImGui::TextWrapped("%s", state.status_text.c_str());
+
+    if (!state.status_text.empty()) {
+      ImGui::Spacing();
+      ImGui::TextWrapped("%s", state.status_text.c_str());
+    }
+
+    ImGui::EndPopup();
   }
-  ImGui::End();
 }
 
 }  // namespace jcan::widgets

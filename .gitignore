@@ -6,3 +6,4 @@ imgui.ini
 compile_commands.json
 *.markdown
 ref/
+.clangd
