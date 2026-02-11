@@ -19,7 +19,7 @@ inline void draw_signals(app_state& state) {
   }
 
   if (!state.any_dbc_loaded()) {
-    ImGui::TextDisabled("No DBC loaded -- load a DBC in the Connection window");
+    ImGui::TextDisabled("No DBC loaded -- use File > Load DBC, Connection window, or drag & drop");
     ImGui::End();
     return;
   }

@@ -153,6 +153,7 @@ struct app_state {
   std::vector<std::unique_ptr<adapter_slot>> adapter_slots;
   int tx_slot_idx{0};
   bool connected{false};
+  bool log_mode{false};
   std::string status_text{"Disconnected"};
 
   struct frame_row {
@@ -398,6 +399,8 @@ struct app_state {
     slot->start_io();
     adapter_slots.push_back(std::move(slot));
     connected = true;
+    log_mode = false;
+    dbc.unload();
     status_text =
         std::format("Connected: {} ({} adapter{})", desc.friendly_name,
                     adapter_slots.size(), adapter_slots.size() > 1 ? "s" : "");
@@ -596,6 +599,7 @@ struct app_state {
 
   float import_log(std::vector<std::pair<int64_t, can_frame>> frames) {
     if (frames.empty()) return 0.f;
+    log_mode = true;
     clear_monitor();
 
     int64_t first_ts = frames.front().first;
