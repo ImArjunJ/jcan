@@ -214,7 +214,8 @@ class dbc_engine {
     for (const auto& ln : networks_) {
       if (!ln.net) continue;
       for (const auto& msg : ln.net->Messages()) {
-        msg_index_[msg.Id()] = &msg;
+        uint64_t id = msg.Id() & 0x1FFFFFFF;
+        msg_index_[id] = &msg;
       }
     }
   }
