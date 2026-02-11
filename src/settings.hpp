@@ -22,9 +22,15 @@ struct settings {
   std::string log_dir;
 
   static std::filesystem::path default_log_dir() {
+#ifdef _WIN32
+    const char* home = std::getenv("USERPROFILE");
+    if (!home) home = "C:\\";
+    return std::filesystem::path(home) / "Documents" / "jcan_logs";
+#else
     const char* home = std::getenv("HOME");
     if (!home) home = "/tmp";
     return std::filesystem::path(home) / "jcan_logs";
+#endif
   }
 
   std::filesystem::path effective_log_dir() const {
@@ -33,6 +39,14 @@ struct settings {
   }
 
   static std::filesystem::path config_dir() {
+#ifdef _WIN32
+    const char* appdata = std::getenv("APPDATA");
+    if (appdata && appdata[0] != '\0')
+      return std::filesystem::path(appdata) / "jcan";
+    const char* home = std::getenv("USERPROFILE");
+    if (!home) home = "C:\\";
+    return std::filesystem::path(home) / "jcan";
+#else
     const char* xdg = std::getenv("XDG_CONFIG_HOME");
     std::filesystem::path dir;
     if (xdg && xdg[0] != '\0') {
@@ -43,6 +57,7 @@ struct settings {
       dir = std::filesystem::path(home) / ".config" / "jcan";
     }
     return dir;
+#endif
   }
 
   static std::filesystem::path config_path() {

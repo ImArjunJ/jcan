@@ -8,7 +8,12 @@
 #include <chrono>
 #include <cstdio>
 #include <filesystem>
+#include <stdexcept>
 #include <thread>
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 #include "app_state.hpp"
 #include "async_dialog.hpp"
@@ -76,6 +81,7 @@ static void setup_default_layout(ImGuiID dockspace_id) {
 }
 
 int main() {
+  try {
   glfwSetErrorCallback(glfw_error_callback);
   if (!glfwInit()) return 1;
 
@@ -121,12 +127,18 @@ int main() {
   std::string mono_font_path;
   {
     const char* mono_paths[] = {
+#ifdef _WIN32
+        "C:\\Windows\\Fonts\\CascadiaMono.ttf",
+        "C:\\Windows\\Fonts\\consola.ttf",
+        "C:\\Windows\\Fonts\\cour.ttf",
+#else
         "/usr/share/fonts/TTF/JetBrainsMono-Regular.ttf",
         "/usr/share/fonts/truetype/jetbrains-mono/JetBrainsMono-Regular.ttf",
         "/usr/share/fonts/TTF/FiraCode-Regular.ttf",
         "/usr/share/fonts/truetype/firacode/FiraCode-Regular.ttf",
         "/usr/share/fonts/TTF/DejaVuSansMono.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+#endif
         nullptr,
     };
     for (const char** p = mono_paths; *p; ++p) {
@@ -588,4 +600,19 @@ int main() {
   glfwDestroyWindow(window);
   glfwTerminate();
   return 0;
+  } catch (const std::exception& e) {
+#ifdef _WIN32
+    MessageBoxA(nullptr, e.what(), "jcan - Fatal Error", MB_OK | MB_ICONERROR);
+#else
+    std::fprintf(stderr, "Fatal: %s\n", e.what());
+#endif
+    return 1;
+  } catch (...) {
+#ifdef _WIN32
+    MessageBoxA(nullptr, "Unknown fatal error", "jcan - Fatal Error", MB_OK | MB_ICONERROR);
+#else
+    std::fprintf(stderr, "Fatal: unknown error\n");
+#endif
+    return 1;
+  }
 }
