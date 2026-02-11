@@ -179,6 +179,10 @@ int main() {
   state.show_plotter = settings.show_plotter;
   state.log_dir = settings.effective_log_dir();
 
+  for (const auto& p : settings.dbc_paths) {
+    if (std::filesystem::exists(p)) state.dbc.load(p);
+  }
+
   state.devices = jcan::discover_adapters();
 
   if (!settings.last_adapter_port.empty()) {
@@ -576,6 +580,7 @@ int main() {
     settings.show_plotter = state.show_plotter;
     settings.ui_scale = state.ui_scale;
     settings.log_dir = state.log_dir.string();
+    settings.dbc_paths = state.dbc.paths();
     if (!state.adapter_slots.empty())
       settings.last_adapter_port = state.adapter_slots[0]->desc.port;
     int w, h;

@@ -278,6 +278,35 @@ struct app_state {
     return dbc_for_frame(f).decode(f);
   }
 
+  std::vector<uint32_t> all_message_ids() const {
+    std::set<uint32_t> ids;
+    for (auto id : dbc.message_ids()) ids.insert(id);
+    for (const auto& slot : adapter_slots) {
+      if (slot->slot_dbc.loaded())
+        for (auto id : slot->slot_dbc.message_ids()) ids.insert(id);
+    }
+    if (log_mode) {
+      for (const auto& [ch, eng] : log_dbc)
+        if (eng.loaded())
+          for (auto id : eng.message_ids()) ids.insert(id);
+    }
+    return {ids.begin(), ids.end()};
+  }
+
+  const dbc_engine& dbc_for_id(uint32_t id) const {
+    if (dbc.has_message(id)) return dbc;
+    for (const auto& slot : adapter_slots) {
+      if (slot->slot_dbc.loaded() && slot->slot_dbc.has_message(id))
+        return slot->slot_dbc;
+    }
+    if (log_mode) {
+      for (const auto& [ch, eng] : log_dbc) {
+        if (eng.loaded() && eng.has_message(id)) return eng;
+      }
+    }
+    return dbc;
+  }
+
   void start_export(const std::string& path) {
     if (exporting.load()) return;
     if (session_log_path.empty() || !logger.recording()) {
@@ -428,7 +457,9 @@ struct app_state {
     adapter_slots.push_back(std::move(slot));
     connected = true;
     log_mode = false;
-    dbc.unload();
+    imported_frames.clear();
+    log_dbc.clear();
+    log_channels.clear();
     status_text =
         std::format("Connected: {} ({} adapter{})", desc.friendly_name,
                     adapter_slots.size(), adapter_slots.size() > 1 ? "s" : "");

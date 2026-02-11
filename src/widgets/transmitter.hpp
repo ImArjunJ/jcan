@@ -26,15 +26,15 @@ inline void draw_transmitter(app_state& state) {
     return;
   }
 
-  if (state.dbc.loaded()) {
-    auto msg_ids = state.dbc.message_ids();
+  if (state.any_dbc_loaded()) {
+    auto msg_ids = state.all_message_ids();
     static int selected_idx = 0;
     static char tx_filter[64]{};
 
     std::vector<std::string> labels;
     labels.reserve(msg_ids.size());
     for (auto mid : msg_ids) {
-      auto name = state.dbc.message_name(mid);
+      auto name = state.any_message_name(mid);
       labels.push_back(std::format("0x{:03X} {}", mid, name));
     }
 
@@ -83,7 +83,8 @@ inline void draw_transmitter(app_state& state) {
     if (ImGui::Button("Add DBC msg") &&
         selected_idx < static_cast<int>(msg_ids.size())) {
       auto mid = msg_ids[selected_idx];
-      auto name = state.dbc.message_name(mid);
+      const auto& eng = state.dbc_for_id(mid);
+      auto name = eng.message_name(mid);
 
       tx_job job;
       job.instance_id = tx_job::next_id();
@@ -92,9 +93,9 @@ inline void draw_transmitter(app_state& state) {
       job.is_raw = false;
       job.frame.id = mid;
       job.frame.extended = (mid > 0x7FF);
-      job.frame.dlc = state.dbc.message_dlc(mid);
+      job.frame.dlc = eng.message_dlc(mid);
       std::memset(job.frame.data.data(), 0, 64);
-      auto sigs = state.dbc.signal_infos(mid);
+      auto sigs = eng.signal_infos(mid);
       for (const auto& si : sigs) job.signal_values[si.name] = 0.0;
       state.tx_sched.upsert(std::move(job));
     }
@@ -158,8 +159,8 @@ inline void draw_transmitter(app_state& state) {
                          "%.0f");
         ImGui::SameLine();
         if (ImGui::Button("Send Once")) {
-          if (!job.is_raw && state.dbc.loaded())
-            job.frame = state.dbc.encode(job.msg_id, job.signal_values);
+          if (!job.is_raw && state.any_dbc_loaded())
+            job.frame = state.dbc_for_id(job.msg_id).encode(job.msg_id, job.signal_values);
           if (auto* a = state.tx_adapter()) (void)adapter_send(*a, job.frame);
         }
         ImGui::SameLine();
@@ -211,7 +212,8 @@ inline void draw_transmitter(app_state& state) {
           }
           if (state.mono_font) ImGui::PopFont();
         } else {
-          auto sigs = state.dbc.signal_infos(job.msg_id);
+          const auto& eng = state.dbc_for_id(job.msg_id);
+          auto sigs = eng.signal_infos(job.msg_id);
 
           float label_w = 0.f;
           for (const auto& si : sigs) {
@@ -302,7 +304,7 @@ inline void draw_transmitter(app_state& state) {
             ImGui::EndTable();
           }
 
-          job.frame = state.dbc.encode(job.msg_id, job.signal_values);
+          job.frame = eng.encode(job.msg_id, job.signal_values);
         }
 
         ImGui::TextDisabled("  Frame: ");
