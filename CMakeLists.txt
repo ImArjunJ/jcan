@@ -125,6 +125,10 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(dbcppp)
 
+if(TARGET dbcppp AND WIN32)
+    target_compile_definitions(dbcppp PUBLIC DBCPPP_EXPORT)
+endif()
+
 FetchContent_Declare(
     nfd
     GIT_REPOSITORY https://github.com/btzy/nativefiledialog-extended.git
