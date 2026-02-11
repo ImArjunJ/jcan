@@ -115,7 +115,6 @@ set(build_kcd OFF CACHE BOOL "" FORCE)
 set(build_tools OFF CACHE BOOL "" FORCE)
 set(build_tests OFF CACHE BOOL "" FORCE)
 set(build_examples OFF CACHE BOOL "" FORCE)
-set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(
     dbcppp
     GIT_REPOSITORY https://github.com/xR3b0rn/dbcppp.git
@@ -123,7 +122,15 @@ FetchContent_Declare(
     GIT_SHALLOW    TRUE
     GIT_SUBMODULES "third-party/boost"
 )
-FetchContent_MakeAvailable(dbcppp)
+FetchContent_GetProperties(dbcppp)
+if(NOT dbcppp_POPULATED)
+    FetchContent_Populate(dbcppp)
+    # dbcppp hardcodes SHARED — patch to STATIC for a self-contained binary
+    file(READ "${dbcppp_SOURCE_DIR}/CMakeLists.txt" _dbcppp_cmake)
+    string(REPLACE "add_library(\${PROJECT_NAME} SHARED" "add_library(\${PROJECT_NAME} STATIC" _dbcppp_cmake "${_dbcppp_cmake}")
+    file(WRITE "${dbcppp_SOURCE_DIR}/CMakeLists.txt" "${_dbcppp_cmake}")
+    add_subdirectory(${dbcppp_SOURCE_DIR} ${dbcppp_BINARY_DIR})
+endif()
 
 if(TARGET dbcppp AND WIN32)
     target_compile_definitions(dbcppp PUBLIC DBCPPP_EXPORT)
