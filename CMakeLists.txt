@@ -165,6 +165,11 @@ if(JCAN_ENABLE_VECTOR AND LIBUSB_FOUND)
     # Embed VN1640A firmware blobs via .incbin assembly directive
     set(JCAN_FW_MAIN_BIN "${CMAKE_CURRENT_SOURCE_DIR}/firmware/vn1640a_main_fw.bin")
     set(JCAN_FW_FPGA_BIN "${CMAKE_CURRENT_SOURCE_DIR}/firmware/vn1640a_fpga.bin")
+    if(WIN32)
+        set(JCAN_ASM_RODATA_SECTION ".rdata,\"dr\"")
+    else()
+        set(JCAN_ASM_RODATA_SECTION ".rodata")
+    endif()
     configure_file(
         ${CMAKE_CURRENT_SOURCE_DIR}/src/firmware_blobs.S.in
         ${CMAKE_CURRENT_BINARY_DIR}/firmware_blobs.S
