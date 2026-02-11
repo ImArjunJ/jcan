@@ -93,3 +93,16 @@ jobs:
             linux-build/jcan-linux-x86_64.tar.gz
             windows-build/jcan-windows-x86_64.zip
           generate_release_notes: true
+          body: |
+            first release.
+
+            - vector vn1640a support (reverse-engineered usb protocol)
+            - kvaser leaf + memorator pro via libusb
+            - slcan serial adapters (cantact, canable, candlelight, etc)
+            - socketcan with auto bitrate config
+            - live monitor with dbc decoding and signal plotting
+            - per-channel dbc files
+            - auto-logging to csv, log import with re-decode
+            - frame transmitter with periodic scheduling
+            - multi-adapter simultaneous connections
+            - linux and windows builds
