@@ -115,6 +115,7 @@ set(build_kcd OFF CACHE BOOL "" FORCE)
 set(build_tools OFF CACHE BOOL "" FORCE)
 set(build_tests OFF CACHE BOOL "" FORCE)
 set(build_examples OFF CACHE BOOL "" FORCE)
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(
     dbcppp
     GIT_REPOSITORY https://github.com/xR3b0rn/dbcppp.git
@@ -123,10 +124,6 @@ FetchContent_Declare(
     GIT_SUBMODULES "third-party/boost"
 )
 FetchContent_MakeAvailable(dbcppp)
-
-if(TARGET dbcppp AND WIN32)
-target_compile_definitions(dbcppp PRIVATE DBCPPP_EXPORT)
-endif()
 
 FetchContent_Declare(
     nfd
