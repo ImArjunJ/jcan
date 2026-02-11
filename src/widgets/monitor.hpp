@@ -3,6 +3,7 @@
 #include <imgui.h>
 
 #include <algorithm>
+#include <cinttypes>
 #include <format>
 
 #include "app_state.hpp"
@@ -314,7 +315,7 @@ inline void draw_monitor_live(app_state& state) {
         }
 
         ImGui::TableNextColumn();
-        ImGui::Text("%lu", row.count);
+        ImGui::Text("%" PRIu64, row.count);
         ImGui::TableNextColumn();
         ImGui::Text("%.1f", row.dt_ms);
 
