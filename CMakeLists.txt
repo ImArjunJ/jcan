@@ -182,7 +182,7 @@ if(JCAN_ENABLE_VECTOR AND LIBUSB_FOUND)
 endif()
 
 if(WIN32)
-    target_compile_definitions(jcan_core PUBLIC WIN32_LEAN_AND_MEAN NOMINMAX)
+    target_compile_definitions(jcan_core PUBLIC WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS)
 endif()
 
 add_executable(jcan_cli src/main.cpp)
