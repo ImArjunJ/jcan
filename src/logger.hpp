@@ -36,7 +36,7 @@ class frame_logger {
   bool start_csv(const std::filesystem::path& path) {
     ofs_.open(path, std::ios::out | std::ios::trunc);
     if (!ofs_.is_open()) return false;
-    ofs_ << "timestamp_us,id,extended,rtr,dlc,fd,brs,data\n";
+    ofs_ << "timestamp_us,dir,id,extended,rtr,dlc,fd,brs,data\n";
     filename_ = path.filename().string();
     frame_count_ = 0;
     start_time_ = can_frame::clock::now();
@@ -106,16 +106,71 @@ class frame_logger {
     return out;
   }
 
+  static bool export_to_file(const std::filesystem::path& path,
+                             const std::vector<can_frame>& frames,
+                             can_frame::clock::time_point base_time) {
+    auto ext = path.extension().string();
+    for (auto& c : ext) c = static_cast<char>(std::tolower(c));
+    bool asc = (ext == ".asc");
+
+    std::ofstream ofs(path, std::ios::out | std::ios::trunc);
+    if (!ofs.is_open()) return false;
+
+    if (asc) {
+      ofs << "date Thu Jan  1 00:00:00 AM 1970\n";
+      ofs << "base hex  timestamps absolute\n";
+      ofs << "internal events logged\n";
+      ofs << "Begin TriggerBlock Thu Jan  1 00:00:00 AM 1970\n";
+    } else {
+      ofs << "timestamp_us,dir,id,extended,rtr,dlc,fd,brs,data\n";
+    }
+
+    for (auto& f : frames) {
+      auto us = std::chrono::duration_cast<std::chrono::microseconds>(
+                    f.timestamp - base_time)
+                    .count();
+      uint8_t len = frame_payload_len(f);
+
+      if (asc) {
+        double seconds = static_cast<double>(us) / 1e6;
+        ofs << std::format("{:>12.6f}", seconds) << "  1  ";
+        if (f.extended)
+          ofs << std::format("{:08X}", f.id) << "x";
+        else
+          ofs << std::format("{:03X}", f.id);
+        ofs << (f.tx ? "  Tx  " : "  Rx  ") << (f.fd ? "fd  " : "d  ")
+            << static_cast<int>(len);
+        for (uint8_t i = 0; i < len; ++i)
+          ofs << std::format("  {:02X}", f.data[i]);
+        if (f.fd && f.brs) ofs << "  BRS";
+        ofs << "\n";
+      } else {
+        ofs << us << "," << (f.tx ? "Tx" : "Rx") << ",0x"
+            << std::format("{:03X}", f.id) << "," << (f.extended ? 1 : 0) << ","
+            << (f.rtr ? 1 : 0) << "," << static_cast<int>(f.dlc) << ","
+            << (f.fd ? 1 : 0) << "," << (f.brs ? 1 : 0) << ",";
+        for (uint8_t i = 0; i < len; ++i) {
+          if (i) ofs << ' ';
+          ofs << std::format("{:02X}", f.data[i]);
+        }
+        ofs << "\n";
+      }
+    }
+
+    if (asc) ofs << "End TriggerBlock\n";
+    return true;
+  }
+
  private:
   void log_csv(const can_frame& f) {
     auto us = std::chrono::duration_cast<std::chrono::microseconds>(
                   f.timestamp - start_time_)
                   .count();
     uint8_t len = frame_payload_len(f);
-    ofs_ << us << ",0x" << std::format("{:03X}", f.id) << ","
-         << (f.extended ? 1 : 0) << "," << (f.rtr ? 1 : 0) << ","
-         << static_cast<int>(f.dlc) << "," << (f.fd ? 1 : 0) << ","
-         << (f.brs ? 1 : 0) << ",";
+    ofs_ << us << "," << (f.tx ? "Tx" : "Rx") << ",0x"
+         << std::format("{:03X}", f.id) << "," << (f.extended ? 1 : 0) << ","
+         << (f.rtr ? 1 : 0) << "," << static_cast<int>(f.dlc) << ","
+         << (f.fd ? 1 : 0) << "," << (f.brs ? 1 : 0) << ",";
     for (uint8_t i = 0; i < len; ++i) {
       if (i) ofs_ << ' ';
       ofs_ << std::format("{:02X}", f.data[i]);
@@ -136,7 +191,8 @@ class frame_logger {
       ofs_ << std::format("{:08X}", f.id) << "x";
     else
       ofs_ << std::format("{:03X}", f.id);
-    ofs_ << "  Rx  " << (f.fd ? "fd  " : "d  ") << static_cast<int>(len);
+    ofs_ << (f.tx ? "  Tx  " : "  Rx  ") << (f.fd ? "fd  " : "d  ")
+         << static_cast<int>(len);
     for (uint8_t i = 0; i < len; ++i) {
       ofs_ << std::format("  {:02X}", f.data[i]);
     }
@@ -156,6 +212,10 @@ class frame_logger {
     ts_us = std::stoll(tok);
 
     if (!std::getline(ss, tok, ',')) return std::nullopt;
+    if (tok == "Tx" || tok == "Rx") {
+      f.tx = (tok == "Tx");
+      if (!std::getline(ss, tok, ',')) return std::nullopt;
+    }
     f.id = static_cast<uint32_t>(std::stoul(tok, nullptr, 0));
 
     if (!std::getline(ss, tok, ',')) return std::nullopt;
@@ -200,6 +260,7 @@ class frame_logger {
     if (ss.fail()) return std::nullopt;
 
     can_frame f{};
+    f.tx = (dir == "Tx");
     int64_t ts_us = static_cast<int64_t>(timestamp_sec * 1e6);
 
     if (!id_str.empty() && id_str.back() == 'x') {

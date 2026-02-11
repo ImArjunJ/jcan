@@ -298,6 +298,9 @@ struct app_state {
     auto replay_frames = replay_buf.drain();
     frames.insert(frames.end(), replay_frames.begin(), replay_frames.end());
 
+    auto tx_frames = tx_sched.drain_sent();
+    frames.insert(frames.end(), tx_frames.begin(), tx_frames.end());
+
     for (auto& f : frames) {
       if (!has_first_frame) {
         first_frame_time = f.timestamp;

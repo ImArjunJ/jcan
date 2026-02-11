@@ -25,7 +25,14 @@ static void glfw_error_callback(int error, const char* description) {
   std::fprintf(stderr, "GLFW Error %d: %s\n", error, description);
 }
 
-enum class dialog_id { none, open_dbc, save_csv, save_asc, open_replay };
+enum class dialog_id {
+  none,
+  open_dbc,
+  save_csv,
+  save_asc,
+  open_replay,
+  export_log
+};
 
 static void update_dbc_status(jcan::app_state& state) {
   if (state.dbc.loaded()) {
@@ -310,6 +317,14 @@ int main() {
             state.logger.stop();
           }
         }
+        if (!state.scrollback.empty()) {
+          if (ImGui::MenuItem("Export Log...", "Ctrl+E", false,
+                              !file_dialog.busy())) {
+            file_dialog.save_file({{"CSV Log", "csv"}, {"Vector ASC", "asc"}},
+                                  "export.csv");
+            pending_dialog = dialog_id::export_log;
+          }
+        }
         if (!state.replaying.load()) {
           if (ImGui::MenuItem("Replay Log...", nullptr, false,
                               !file_dialog.busy())) {
@@ -424,6 +439,12 @@ int main() {
     }
     if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Q))
       glfwSetWindowShouldClose(window, GLFW_TRUE);
+    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_E) && !file_dialog.busy() &&
+        !state.scrollback.empty()) {
+      file_dialog.save_file({{"CSV Log", "csv"}, {"Vector ASC", "asc"}},
+                            "export.csv");
+      pending_dialog = dialog_id::export_log;
+    }
     if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_R)) {
       if (!state.logger.recording()) {
         if (!file_dialog.busy()) {
@@ -459,6 +480,16 @@ int main() {
             else
               frames = jcan::frame_logger::load_csv(path_str);
             if (!frames.empty()) state.start_replay(std::move(frames));
+          }
+          break;
+        case dialog_id::export_log:
+          if (*result) {
+            if (jcan::frame_logger::export_to_file(**result, state.scrollback,
+                                                   state.first_frame_time))
+              state.status_text =
+                  std::format("Exported {} frames", state.scrollback.size());
+            else
+              state.status_text = "Export failed!";
           }
           break;
         default:

@@ -10,6 +10,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "frame_buffer.hpp"
 #include "hardware.hpp"
 #include "types.hpp"
 
@@ -59,6 +60,10 @@ class tx_scheduler {
     jobs_.clear();
   }
 
+  [[nodiscard]] std::vector<can_frame> drain_sent() {
+    return sent_buf_.drain();
+  }
+
   template <typename Fn>
   void with_jobs(Fn&& fn) {
     std::lock_guard lk(mtx_);
@@ -88,7 +93,12 @@ class tx_scheduler {
           auto elapsed =
               duration<float, std::milli>(now - job.last_sent).count();
           if (elapsed >= job.period_ms) {
-            (void)adapter_send(hw, job.frame);
+            if (adapter_send(hw, job.frame)) {
+              can_frame logged = job.frame;
+              logged.tx = true;
+              logged.timestamp = can_frame::clock::now();
+              sent_buf_.push(logged);
+            }
             job.last_sent = now;
           }
         }
@@ -101,6 +111,7 @@ class tx_scheduler {
   std::mutex mtx_;
   std::vector<tx_job> jobs_;
   std::optional<std::jthread> thread_;
+  frame_buffer<4096> sent_buf_;
 };
 
 }  // namespace jcan
