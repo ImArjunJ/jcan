@@ -75,8 +75,7 @@ inline void draw_plotter(app_state& state, plotter_state& ps) {
   }
 
   if (!state.any_dbc_loaded()) {
-    ImGui::TextDisabled(
-        "No DBC loaded -- load a DBC file to see signal channels");
+    ImGui::TextDisabled("No DBC loaded -- load a DBC in the Connection window");
     ImGui::End();
     return;
   }

@@ -26,52 +26,14 @@ static void glfw_error_callback(int error, const char* description) {
   std::fprintf(stderr, "GLFW Error %d: %s\n", error, description);
 }
 
-enum class dialog_id {
-  none,
-  open_dbc,
-  save_csv,
-  save_asc,
-  open_replay,
-  import_log,
-  export_log
-};
-
-static void update_dbc_status(jcan::app_state& state) {
-  if (state.dbc.loaded()) {
-    state.dbc_paths = state.dbc.paths();
-    auto names = state.dbc.filenames();
-    std::string joined;
-    for (std::size_t i = 0; i < names.size(); ++i) {
-      if (i) joined += ", ";
-      joined += names[i];
-    }
-    state.status_text = std::format("DBC: {} ({} msgs)", joined,
-                                    state.dbc.message_ids().size());
-  } else {
-    state.status_text = state.connected ? "DBC unloaded" : "Disconnected";
-  }
-}
+enum class dialog_id { none, open_replay, import_log, export_log };
 
 static jcan::app_state* g_drop_state = nullptr;
 
 static void glfw_drop_callback([[maybe_unused]] GLFWwindow* window, int count,
                                const char** paths) {
-  if (!g_drop_state || count <= 0) return;
-  for (int i = 0; i < count; ++i) {
-    std::string path(paths[i]);
-    if (path.size() >= 4) {
-      std::string ext = path.substr(path.size() - 4);
-      for (auto& c : ext) c = static_cast<char>(std::tolower(c));
-      if (ext == ".dbc") {
-        if (g_drop_state->dbc.load(path)) {
-          update_dbc_status(*g_drop_state);
-        } else {
-          g_drop_state->status_text = "DBC load failed!";
-        }
-        return;
-      }
-    }
-  }
+  (void)count;
+  (void)paths;
 }
 
 static void setup_default_layout(ImGuiID dockspace_id) {
@@ -198,23 +160,6 @@ int main() {
     }
   }
 
-  for (const auto& p : settings.dbc_paths) {
-    if (!p.empty() && std::filesystem::exists(p)) {
-      state.dbc.load(p);
-    }
-  }
-  if (state.dbc.loaded()) {
-    state.dbc_paths = state.dbc.paths();
-    auto names = state.dbc.filenames();
-    std::string joined;
-    for (std::size_t i = 0; i < names.size(); ++i) {
-      if (i) joined += ", ";
-      joined += names[i];
-    }
-    state.status_text = std::format("DBC: {} ({} msgs)", joined,
-                                    state.dbc.message_ids().size());
-  }
-
   g_drop_state = &state;
   glfwSetDropCallback(window, glfw_drop_callback);
 
@@ -273,38 +218,6 @@ int main() {
 
     if (ImGui::BeginMainMenuBar()) {
       if (ImGui::BeginMenu("File")) {
-        if (ImGui::MenuItem("Load DBC...", "Ctrl+O", false,
-                            !file_dialog.busy())) {
-          file_dialog.open_file({{"DBC Files", "dbc"}});
-          pending_dialog = dialog_id::open_dbc;
-        }
-        if (state.dbc.loaded()) {
-          if (ImGui::BeginMenu("Unload DBC")) {
-            auto fnames = state.dbc.filenames();
-            auto fpaths = state.dbc.paths();
-            for (std::size_t di = 0; di < fnames.size(); ++di) {
-              if (ImGui::MenuItem(fnames[di].c_str())) {
-                state.dbc.unload_one(fpaths[di]);
-                state.dbc_paths = state.dbc.paths();
-                state.status_text =
-                    state.dbc.loaded()
-                        ? std::format(
-                              "DBC: {} file{}", state.dbc.filenames().size(),
-                              state.dbc.filenames().size() > 1 ? "s" : "")
-                        : (state.connected ? "DBC unloaded" : "Disconnected");
-              }
-            }
-            ImGui::Separator();
-            if (ImGui::MenuItem("Unload All")) {
-              state.dbc.unload();
-              state.dbc_paths.clear();
-              state.status_text =
-                  state.connected ? "DBC unloaded" : "Disconnected";
-            }
-            ImGui::EndMenu();
-          }
-        }
-        ImGui::Separator();
         if (state.logger.recording() && !state.exporting.load()) {
           auto log_label =
               std::format("Logging to: {} ({} frames)", state.logger.filename(),
@@ -443,10 +356,6 @@ int main() {
       ImGui::EndMainMenuBar();
     }
 
-    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_O) && !file_dialog.busy()) {
-      file_dialog.open_file({{"DBC Files", "dbc"}});
-      pending_dialog = dialog_id::open_dbc;
-    }
     if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Q))
       glfwSetWindowShouldClose(window, GLFW_TRUE);
     if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_R) &&
@@ -467,14 +376,6 @@ int main() {
 
     if (auto result = file_dialog.poll()) {
       switch (pending_dialog) {
-        case dialog_id::open_dbc:
-          if (*result) {
-            if (state.dbc.load(**result))
-              update_dbc_status(state);
-            else
-              state.status_text = "DBC load failed!";
-          }
-          break;
         case dialog_id::open_replay:
           if (*result) {
             auto& path_str = **result;
@@ -561,7 +462,6 @@ int main() {
     settings.show_statistics = state.show_statistics;
     settings.show_plotter = state.show_plotter;
     settings.ui_scale = state.ui_scale;
-    settings.dbc_paths = state.dbc_paths;
     settings.log_dir = state.log_dir.string();
     if (!state.adapter_slots.empty())
       settings.last_adapter_port = state.adapter_slots[0]->desc.port;
