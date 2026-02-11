@@ -163,7 +163,7 @@ struct app_state {
   bool monitor_freeze{false};
   char filter_text[64]{};
   char scrollback_filter_text[64]{};
-  static constexpr std::size_t k_max_scrollback = 50'000;
+  static constexpr std::size_t k_max_scrollback = 50'000'000;
 
   bool show_connection_modal{true};
   float ui_scale{1.0f};
