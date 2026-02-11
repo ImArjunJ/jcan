@@ -9,8 +9,10 @@
 #include <format>
 #include <fstream>
 #include <functional>
+#include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <stop_token>
 #include <string>
 #include <thread>
@@ -184,6 +186,9 @@ struct app_state {
 
   dbc_engine dbc;
   std::vector<std::string> dbc_paths;
+  std::map<uint8_t, dbc_engine> log_dbc;
+  std::vector<can_frame> imported_frames;
+  std::set<uint8_t> log_channels;
 
   tx_scheduler tx_sched;
 
@@ -207,6 +212,11 @@ struct app_state {
   std::string export_result_msg;
 
   const dbc_engine& dbc_for_frame(const can_frame& f) const {
+    if (log_mode) {
+      auto it = log_dbc.find(f.source);
+      if (it != log_dbc.end() && it->second.loaded()) return it->second;
+      return dbc;
+    }
     if (f.source < adapter_slots.size()) {
       auto& slot_dbc = adapter_slots[f.source]->slot_dbc;
       if (slot_dbc.loaded()) return slot_dbc;
@@ -220,6 +230,10 @@ struct app_state {
 
   bool any_dbc_loaded() const {
     if (dbc.loaded()) return true;
+    if (log_mode) {
+      for (const auto& [ch, eng] : log_dbc)
+        if (eng.loaded()) return true;
+    }
     for (const auto& slot : adapter_slots) {
       if (slot->slot_dbc.loaded()) return true;
     }
@@ -227,6 +241,12 @@ struct app_state {
   }
 
   std::string message_name_for(uint32_t id, uint8_t source) const {
+    if (log_mode) {
+      auto it = log_dbc.find(source);
+      if (it != log_dbc.end() && it->second.loaded())
+        return it->second.message_name(id);
+      return dbc.message_name(id);
+    }
     if (source < adapter_slots.size()) {
       auto& slot_dbc = adapter_slots[source]->slot_dbc;
       if (slot_dbc.loaded()) return slot_dbc.message_name(id);
@@ -237,6 +257,14 @@ struct app_state {
   std::string any_message_name(uint32_t id) const {
     auto name = dbc.message_name(id);
     if (!name.empty()) return name;
+    if (log_mode) {
+      for (const auto& [ch, eng] : log_dbc) {
+        if (eng.loaded()) {
+          name = eng.message_name(id);
+          if (!name.empty()) return name;
+        }
+      }
+    }
     for (const auto& slot : adapter_slots) {
       if (slot->slot_dbc.loaded()) {
         name = slot->slot_dbc.message_name(id);
@@ -600,6 +628,8 @@ struct app_state {
   float import_log(std::vector<std::pair<int64_t, can_frame>> frames) {
     if (frames.empty()) return 0.f;
     log_mode = true;
+    log_dbc.clear();
+    dbc.unload();
     clear_monitor();
 
     int64_t first_ts = frames.front().first;
@@ -615,8 +645,12 @@ struct app_state {
     auto log_duration = std::chrono::microseconds(last_ts - first_ts);
     auto base_time = now - log_duration;
 
+    imported_frames.clear();
+    log_channels.clear();
+
     for (auto& [ts_us, f] : frames) {
       f.timestamp = base_time + std::chrono::microseconds(ts_us - first_ts);
+      log_channels.insert(f.source);
 
       if (!has_first_frame) {
         first_frame_time = f.timestamp;
@@ -626,6 +660,7 @@ struct app_state {
       stats.record(f);
       if (f.error) continue;
 
+      imported_frames.push_back(f);
       scrollback.push_back(f);
 
       if (dbc_for_frame(f).has_message(f.id)) {
@@ -657,6 +692,21 @@ struct app_state {
     while (scrollback.size() > k_max_scrollback) scrollback.pop_front();
 
     return static_cast<float>(duration_sec);
+  }
+
+  void redecode_log() {
+    if (!log_mode || imported_frames.empty()) return;
+    signals.clear();
+    for (const auto& f : imported_frames) {
+      if (dbc_for_frame(f).has_message(f.id)) {
+        auto decoded = dbc_for_frame(f).decode(f);
+        for (const auto& sig : decoded) {
+          signals.push(signal_key{.msg_id = f.id, .name = sig.name},
+                       f.timestamp, sig.value, sig.unit, sig.minimum,
+                       sig.maximum);
+        }
+      }
+    }
   }
 };
 

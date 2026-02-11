@@ -40,11 +40,13 @@ static void glfw_drop_callback([[maybe_unused]] GLFWwindow* window, int count,
       std::string ext = path.substr(path.size() - 4);
       for (auto& c : ext) c = static_cast<char>(std::tolower(c));
       if (ext == ".dbc") {
-        if (g_drop_state->dbc.load(path))
+        if (g_drop_state->dbc.load(path)) {
+          g_drop_state->redecode_log();
           g_drop_state->status_text = std::format(
               "DBC: {} msgs", g_drop_state->dbc.message_ids().size());
-        else
+        } else {
           g_drop_state->status_text = "DBC load failed!";
+        }
         return;
       }
     }
@@ -85,6 +87,7 @@ int main() {
 
   jcan::async_dialog file_dialog;
   dialog_id pending_dialog = dialog_id::none;
+  uint8_t pending_dbc_channel = 0xff;
 
   jcan::settings settings;
   settings.load();
@@ -233,22 +236,55 @@ int main() {
 
     if (ImGui::BeginMainMenuBar()) {
       if (ImGui::BeginMenu("File")) {
-        if (state.log_mode) {
-          if (ImGui::MenuItem("Load DBC...", "Ctrl+O", false,
-                              !file_dialog.busy())) {
-            file_dialog.open_file({{"DBC Files", "dbc"}});
-            pending_dialog = dialog_id::open_dbc;
-          }
-          if (state.dbc.loaded()) {
-            if (ImGui::BeginMenu("Unload DBC")) {
-              auto fnames = state.dbc.filenames();
-              auto fpaths = state.dbc.paths();
-              for (std::size_t di = 0; di < fnames.size(); ++di) {
-                if (ImGui::MenuItem(fnames[di].c_str()))
-                  state.dbc.unload_one(fpaths[di]);
+        if (state.log_mode && !state.imported_frames.empty()) {
+          if (state.log_channels.size() <= 1) {
+            if (ImGui::MenuItem("Load DBC...", "Ctrl+O", false,
+                                !file_dialog.busy())) {
+              pending_dbc_channel = 0xff;
+              file_dialog.open_file({{"DBC Files", "dbc"}});
+              pending_dialog = dialog_id::open_dbc;
+            }
+            if (state.dbc.loaded()) {
+              ImGui::SameLine();
+              ImGui::TextDisabled("(%s)",
+                                  state.dbc.filenames().front().c_str());
+              if (ImGui::MenuItem("Unload DBC")) {
+                state.dbc.unload();
+                state.redecode_log();
               }
-              ImGui::Separator();
-              if (ImGui::MenuItem("Unload All")) state.dbc.unload();
+            }
+          } else {
+            if (ImGui::BeginMenu("Log DBC")) {
+              for (uint8_t ch : state.log_channels) {
+                ImGui::PushID(ch);
+                auto it = state.log_dbc.find(ch);
+                bool has = it != state.log_dbc.end() && it->second.loaded();
+                auto label = std::format("Ch {}", static_cast<int>(ch));
+                if (has) {
+                  ImGui::TextDisabled("%s: %s", label.c_str(),
+                                      it->second.filenames().front().c_str());
+                  ImGui::SameLine();
+                  if (ImGui::SmallButton("Unload")) {
+                    state.log_dbc.erase(ch);
+                    state.redecode_log();
+                  }
+                  ImGui::SameLine();
+                  if (ImGui::SmallButton("Change...")) {
+                    pending_dbc_channel = ch;
+                    file_dialog.open_file({{"DBC Files", "dbc"}});
+                    pending_dialog = dialog_id::open_dbc;
+                  }
+                } else {
+                  auto btn = std::format("Load DBC for {}...", label);
+                  if (ImGui::MenuItem(btn.c_str(), nullptr, false,
+                                      !file_dialog.busy())) {
+                    pending_dbc_channel = ch;
+                    file_dialog.open_file({{"DBC Files", "dbc"}});
+                    pending_dialog = dialog_id::open_dbc;
+                  }
+                }
+                ImGui::PopID();
+              }
               ImGui::EndMenu();
             }
           }
@@ -407,6 +443,7 @@ int main() {
     }
     if (state.log_mode && io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_O) &&
         !file_dialog.busy()) {
+      pending_dbc_channel = 0xff;
       file_dialog.open_file({{"DBC Files", "dbc"}});
       pending_dialog = dialog_id::open_dbc;
     }
@@ -419,11 +456,25 @@ int main() {
       switch (pending_dialog) {
         case dialog_id::open_dbc:
           if (*result) {
-            if (state.dbc.load(**result))
-              state.status_text = std::format(
-                  "DBC: {} msgs", state.dbc.message_ids().size());
-            else
-              state.status_text = "DBC load failed!";
+            if (pending_dbc_channel == 0xff) {
+              if (state.dbc.load(**result)) {
+                state.redecode_log();
+                state.status_text =
+                    std::format("DBC: {} msgs", state.dbc.message_ids().size());
+              } else {
+                state.status_text = "DBC load failed!";
+              }
+            } else {
+              auto& eng = state.log_dbc[pending_dbc_channel];
+              if (eng.load(**result)) {
+                state.redecode_log();
+                state.status_text = std::format(
+                    "Ch {} DBC: {} msgs", static_cast<int>(pending_dbc_channel),
+                    eng.message_ids().size());
+              } else {
+                state.status_text = "DBC load failed!";
+              }
+            }
           }
           break;
         case dialog_id::open_replay:

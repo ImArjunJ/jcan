@@ -75,7 +75,9 @@ inline void draw_plotter(app_state& state, plotter_state& ps) {
   }
 
   if (!state.any_dbc_loaded()) {
-    ImGui::TextDisabled("No DBC loaded -- use File > Load DBC, Connection window, or drag & drop");
+    ImGui::TextDisabled(
+        "No DBC loaded -- use File > Load DBC, Connection window, or drag & "
+        "drop");
     ImGui::End();
     return;
   }
