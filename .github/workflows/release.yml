@@ -1,0 +1,91 @@
+name: build
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake pkg-config \
+            libusb-1.0-0-dev libgl-dev libxrandr-dev libxinerama-dev \
+            libxcursor-dev libxi-dev libxkbcommon-dev libdbus-1-dev
+
+      - name: build
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j$(nproc)
+
+      - name: package
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          mkdir -p dist
+          cp build/jcan_gui dist/
+          cp build/jcan_cli dist/
+          cp LICENSE dist/
+          tar czf jcan-linux-x86_64.tar.gz -C dist .
+
+      - uses: actions/upload-artifact@v4
+        if: startsWith(github.ref, 'refs/tags/v')
+        with:
+          name: linux-build
+          path: jcan-linux-x86_64.tar.gz
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install libusb
+        run: |
+          choco install pkgconfiglite -y
+          vcpkg install libusb:x64-windows
+          echo "PKG_CONFIG_PATH=$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows\lib\pkgconfig" >> $env:GITHUB_ENV
+          echo "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows\bin" >> $env:GITHUB_PATH
+
+      - name: build
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+          cmake --build build --config Release -j $env:NUMBER_OF_PROCESSORS
+
+      - name: package
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          mkdir dist
+          copy build\Release\jcan_gui.exe dist\
+          copy build\Release\jcan_cli.exe dist\
+          copy LICENSE dist\
+          Compress-Archive -Path dist\* -DestinationPath jcan-windows-x86_64.zip
+
+      - uses: actions/upload-artifact@v4
+        if: startsWith(github.ref, 'refs/tags/v')
+        with:
+          name: windows-build
+          path: jcan-windows-x86_64.zip
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build-linux, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+
+      - name: create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            linux-build/jcan-linux-x86_64.tar.gz
+            windows-build/jcan-windows-x86_64.zip
+          generate_release_notes: true
