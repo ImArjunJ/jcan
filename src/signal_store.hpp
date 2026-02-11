@@ -41,7 +41,7 @@ struct channel_info {
 
 class signal_store {
  public:
-  static constexpr double k_default_max_seconds = 600.0;  // 10 minutes
+  static constexpr double k_default_max_seconds = 600.0;
 
   void set_max_seconds(double s) { max_seconds_ = s; }
   double max_seconds() const { return max_seconds_; }

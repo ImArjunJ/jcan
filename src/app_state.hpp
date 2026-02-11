@@ -37,7 +37,7 @@ struct bus_stats {
     uint64_t total_count{0};
     uint64_t window_count{0};
     float rate_hz{0.f};
-    uint8_t last_source{0};  // last adapter slot that sent this ID
+    uint8_t last_source{0};
   };
 
   std::unordered_map<uint32_t, id_stats> per_id;
@@ -128,7 +128,7 @@ struct app_state {
     adapter hw;
     frame_buffer<8192> rx_buf;
     std::optional<std::jthread> io_thread;
-    dbc_engine slot_dbc;  // per-channel DBC (optional, falls back to global)
+    dbc_engine slot_dbc;
 
     void start_io() {
       io_thread.emplace([this](std::stop_token stop) {
@@ -187,8 +187,8 @@ struct app_state {
   tx_scheduler tx_sched;
 
   frame_logger logger;
-  std::filesystem::path log_dir;  // from settings
-  std::string session_log_path;   // current session log file
+  std::filesystem::path log_dir;
+  std::string session_log_path;
   signal_store signals;
   frame_buffer<8192> replay_buf;
   std::optional<std::jthread> replay_thread;

@@ -507,9 +507,9 @@ int main() {
               float dur = state.import_log(std::move(frames));
               state.status_text = std::format("Imported {} frames ({:.1f}s)",
                                               state.scrollback.size(), dur);
-              // Zoom all charts to show the full imported data
+
               for (auto& c : plotter.charts) {
-                c.view_duration_sec = dur * 1.05f;  // slight padding
+                c.view_duration_sec = dur * 1.05f;
                 c.view_end_offset_sec = 0.0f;
                 c.live_follow = false;
               }
@@ -572,7 +572,7 @@ int main() {
     settings.save();
   }
 
-  state.export_thread.reset();  // wait for async export to finish
+  state.export_thread.reset();
   state.logger.stop();
   state.disconnect();
 

@@ -19,7 +19,7 @@ struct settings {
   int window_width{1280};
   int window_height{800};
   float ui_scale{1.0f};
-  std::string log_dir;  // auto-log directory; empty = default ~/jcan_logs/
+  std::string log_dir;
 
   static std::filesystem::path default_log_dir() {
     const char* home = std::getenv("HOME");

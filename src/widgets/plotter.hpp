@@ -13,24 +13,18 @@
 
 namespace jcan::widgets {
 
-/// Persistent state for the plotter window.
 struct plotter_state {
   std::vector<strip_chart_state> charts;
   channel_list_state channel_list;
-  int active_chart{0};  // which chart new signals get added to
+  int active_chart{0};
 
-  // Shared time axis — all charts stay in sync
   bool shared_live{true};
   float shared_duration{10.0f};
   float shared_offset{0.0f};
   signal_sample::clock::time_point shared_pause_time{};
 
-  plotter_state() {
-    // Start with one empty chart
-    charts.emplace_back();
-  }
+  plotter_state() { charts.emplace_back(); }
 
-  /// Copy shared time axis into a chart before drawing.
   void sync_to_chart(strip_chart_state& c) const {
     c.live_follow = shared_live;
     c.view_duration_sec = shared_duration;
@@ -38,8 +32,6 @@ struct plotter_state {
     c.pause_time = shared_pause_time;
   }
 
-  /// Copy a chart's time axis back after drawing (interaction may have changed
-  /// it).
   void sync_from_chart(const strip_chart_state& c) {
     shared_live = c.live_follow;
     shared_duration = c.view_duration_sec;
@@ -48,18 +40,14 @@ struct plotter_state {
   }
 };
 
-/// Returns true if a signal_key is plotted on any chart.
 inline bool is_signal_on_any_chart(const plotter_state& ps,
                                    const signal_key& key) {
-  for (const auto& chart : ps.charts) {
-    for (const auto& tr : chart.traces) {
+  for (const auto& chart : ps.charts)
+    for (const auto& tr : chart.traces)
       if (tr.key == key) return true;
-    }
-  }
   return false;
 }
 
-/// Toggle a signal on the active chart.
 inline void toggle_signal(plotter_state& ps, const signal_key& key) {
   if (ps.charts.empty()) ps.charts.emplace_back();
   int idx =
@@ -73,7 +61,6 @@ inline void toggle_signal(plotter_state& ps, const signal_key& key) {
     }
   }
 
-  // Add with auto-color
   chart_trace tr;
   tr.key = key;
   tr.color = trace_color(static_cast<int>(chart.traces.size()));
@@ -96,16 +83,13 @@ inline void draw_plotter(app_state& state, plotter_state& ps) {
 
   float sidebar_width = 220.0f * state.ui_scale;
 
-  // --- Channel list sidebar ---
   if (ImGui::BeginChild("##sidebar", ImVec2(sidebar_width, 0), true)) {
     auto msg_name_fn = [&state](uint32_t id) -> std::string {
       return state.any_message_name(id);
     };
-
     auto is_on = [&ps](const signal_key& key) -> bool {
       return is_signal_on_any_chart(ps, key);
     };
-
     draw_channel_list(ps.channel_list, state.signals, msg_name_fn, is_on);
   }
   ImGui::EndChild();
@@ -115,7 +99,6 @@ inline void draw_plotter(app_state& state, plotter_state& ps) {
   if (ImGui::BeginChild(
           "##charts_area", ImVec2(0, 0), false,
           ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
-    // Toolbar
     if (ImGui::SmallButton("+ Chart")) {
       ps.charts.emplace_back();
     }
@@ -125,14 +108,11 @@ inline void draw_plotter(app_state& state, plotter_state& ps) {
                         state.signals.channel_count(),
                         state.signals.total_samples());
 
-    // Pause / Live toggle
     if (!ps.charts.empty()) {
       ImGui::SameLine();
       if (ps.shared_live) {
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.5f, 0.2f, 0.7f));
-        if (ImGui::SmallButton("LIVE")) {
-          ps.shared_live = false;
-        }
+        if (ImGui::SmallButton("LIVE")) ps.shared_live = false;
         ImGui::PopStyleColor();
         if (ImGui::IsItemHovered())
           ImGui::SetTooltip("Click or press Space to pause");
@@ -164,27 +144,21 @@ inline void draw_plotter(app_state& state, plotter_state& ps) {
 
       for (int ci = 0; ci < n_charts; ++ci) {
         auto& chart = ps.charts[static_cast<std::size_t>(ci)];
-
         ImGui::PushID(ci);
-
-        // Push shared time axis into chart before drawing
         ps.sync_to_chart(chart);
 
-        // Chart header — thin selectable bar instead of collapsing header
         bool is_active = (ci == ps.active_chart);
         {
           std::string label = std::format("  Chart {} ({} trace{})", ci + 1,
                                           chart.traces.size(),
                                           chart.traces.size() != 1 ? "s" : "");
-          if (is_active) {
+          if (is_active)
             ImGui::PushStyleColor(ImGuiCol_Header,
                                   ImVec4(0.2f, 0.4f, 0.6f, 0.5f));
-          }
           if (ImGui::Selectable(label.c_str(), is_active,
                                 ImGuiSelectableFlags_None,
-                                ImVec2(0, ImGui::GetTextLineHeight()))) {
+                                ImVec2(0, ImGui::GetTextLineHeight())))
             ps.active_chart = ci;
-          }
           if (is_active) ImGui::PopStyleColor();
 
           if (ImGui::BeginDragDropTarget()) {
@@ -192,14 +166,12 @@ inline void draw_plotter(app_state& state, plotter_state& ps) {
                     ImGui::AcceptDragDropPayload("SIGNAL_KEY")) {
               auto* key = *static_cast<const signal_key* const*>(payload->Data);
               ps.active_chart = ci;
-              // Add if not already on this chart
               bool already = false;
-              for (const auto& tr : chart.traces) {
+              for (const auto& tr : chart.traces)
                 if (tr.key == *key) {
                   already = true;
                   break;
                 }
-              }
               if (!already) {
                 chart_trace tr;
                 tr.key = *key;
@@ -210,7 +182,6 @@ inline void draw_plotter(app_state& state, plotter_state& ps) {
             ImGui::EndDragDropTarget();
           }
 
-          // Right-click to remove
           if (ImGui::IsItemClicked(ImGuiMouseButton_Right) && n_charts > 1) {
             ps.charts.erase(ps.charts.begin() + ci);
             if (ps.active_chart >= static_cast<int>(ps.charts.size()))
@@ -224,27 +195,21 @@ inline void draw_plotter(app_state& state, plotter_state& ps) {
         }
 
         draw_strip_chart(chart, state.signals, chart_h);
-
-        // Pull time axis back — if user interacted with this chart, it updates
-        // shared state
         ps.sync_from_chart(chart);
-
         ImGui::PopID();
       }
     }
 
-    // Keyboard: Space to toggle live
     if (ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows) &&
         ImGui::IsKeyPressed(ImGuiKey_Space)) {
-      if (ps.shared_live) {
+      if (ps.shared_live)
         ps.shared_live = false;
-      } else {
+      else {
         ps.shared_live = true;
         ps.shared_offset = 0.0f;
       }
     }
 
-    // W to zoom out full
     if (ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows) &&
         ImGui::IsKeyPressed(ImGuiKey_W)) {
       ps.shared_duration = static_cast<float>(state.signals.max_seconds());

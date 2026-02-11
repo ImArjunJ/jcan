@@ -66,4 +66,4 @@ inline bool retrigger_udev() {
 #endif
 }
 
-}  // namespace jcan
+}

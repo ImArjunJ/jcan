@@ -133,7 +133,6 @@ inline void draw_connection_modal(app_state& state) {
       }
     }
 
-    // Log directory
     ImGui::Spacing();
     ImGui::Separator();
     ImGui::Text("Log Directory:");

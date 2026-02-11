@@ -36,7 +36,7 @@ class frame_logger {
   bool start_csv(const std::filesystem::path& path) {
     ofs_.open(path, std::ios::out | std::ios::trunc);
     if (!ofs_.is_open()) return false;
-    ofs_ << "timestamp_us,dir,id,extended,rtr,dlc,fd,brs,data\n";
+    ofs_ << "timestamp_us,ch,dir,id,extended,rtr,dlc,fd,brs,data\n";
     filename_ = path.filename().string();
     frame_count_ = 0;
     start_time_ = can_frame::clock::now();
@@ -126,7 +126,7 @@ class frame_logger {
       ofs << "internal events logged\n";
       ofs << "Begin TriggerBlock Thu Jan  1 00:00:00 AM 1970\n";
     } else {
-      ofs << "timestamp_us,dir,id,extended,rtr,dlc,fd,brs,data\n";
+      ofs << "timestamp_us,ch,dir,id,extended,rtr,dlc,fd,brs,data\n";
     }
 
     for (auto& f : frames) {
@@ -137,7 +137,8 @@ class frame_logger {
 
       if (asc) {
         double seconds = static_cast<double>(us) / 1e6;
-        ofs << std::format("{:>12.6f}", seconds) << "  1  ";
+        int ch = (f.source == 0xff) ? 1 : static_cast<int>(f.source) + 1;
+        ofs << std::format("{:>12.6f}", seconds) << "  " << ch << "  ";
         if (f.extended)
           ofs << std::format("{:08X}", f.id) << "x";
         else
@@ -149,10 +150,11 @@ class frame_logger {
         if (f.fd && f.brs) ofs << "  BRS";
         ofs << "\n";
       } else {
-        ofs << us << "," << (f.tx ? "Tx" : "Rx") << ",0x"
-            << std::format("{:03X}", f.id) << "," << (f.extended ? 1 : 0) << ","
-            << (f.rtr ? 1 : 0) << "," << static_cast<int>(f.dlc) << ","
-            << (f.fd ? 1 : 0) << "," << (f.brs ? 1 : 0) << ",";
+        ofs << us << "," << static_cast<int>(f.source) << ","
+            << (f.tx ? "Tx" : "Rx") << ",0x" << std::format("{:03X}", f.id)
+            << "," << (f.extended ? 1 : 0) << "," << (f.rtr ? 1 : 0) << ","
+            << static_cast<int>(f.dlc) << "," << (f.fd ? 1 : 0) << ","
+            << (f.brs ? 1 : 0) << ",";
         for (uint8_t i = 0; i < len; ++i) {
           if (i) ofs << ' ';
           ofs << std::format("{:02X}", f.data[i]);
@@ -171,10 +173,11 @@ class frame_logger {
                   f.timestamp - start_time_)
                   .count();
     uint8_t len = frame_payload_len(f);
-    ofs_ << us << "," << (f.tx ? "Tx" : "Rx") << ",0x"
-         << std::format("{:03X}", f.id) << "," << (f.extended ? 1 : 0) << ","
-         << (f.rtr ? 1 : 0) << "," << static_cast<int>(f.dlc) << ","
-         << (f.fd ? 1 : 0) << "," << (f.brs ? 1 : 0) << ",";
+    ofs_ << us << "," << static_cast<int>(f.source) << ","
+         << (f.tx ? "Tx" : "Rx") << ",0x" << std::format("{:03X}", f.id) << ","
+         << (f.extended ? 1 : 0) << "," << (f.rtr ? 1 : 0) << ","
+         << static_cast<int>(f.dlc) << "," << (f.fd ? 1 : 0) << ","
+         << (f.brs ? 1 : 0) << ",";
     for (uint8_t i = 0; i < len; ++i) {
       if (i) ofs_ << ' ';
       ofs_ << std::format("{:02X}", f.data[i]);
@@ -190,7 +193,8 @@ class frame_logger {
     double seconds = static_cast<double>(us) / 1e6;
     uint8_t len = frame_payload_len(f);
 
-    ofs_ << std::format("{:>12.6f}", seconds) << "  1  ";
+    int ch = (f.source == 0xff) ? 1 : static_cast<int>(f.source) + 1;
+    ofs_ << std::format("{:>12.6f}", seconds) << "  " << ch << "  ";
     if (f.extended)
       ofs_ << std::format("{:08X}", f.id) << "x";
     else
@@ -216,9 +220,21 @@ class frame_logger {
     ts_us = std::stoll(tok);
 
     if (!std::getline(ss, tok, ',')) return std::nullopt;
+
     if (tok == "Tx" || tok == "Rx") {
       f.tx = (tok == "Tx");
       if (!std::getline(ss, tok, ',')) return std::nullopt;
+    } else {
+      try {
+        f.source = static_cast<uint8_t>(std::stoi(tok));
+      } catch (...) {
+        f.source = 0xff;
+      }
+      if (!std::getline(ss, tok, ',')) return std::nullopt;
+      if (tok == "Tx" || tok == "Rx") {
+        f.tx = (tok == "Tx");
+        if (!std::getline(ss, tok, ',')) return std::nullopt;
+      }
     }
     f.id = static_cast<uint32_t>(std::stoul(tok, nullptr, 0));
 
@@ -265,6 +281,12 @@ class frame_logger {
 
     can_frame f{};
     f.tx = (dir == "Tx");
+    try {
+      int ch = std::stoi(channel);
+      f.source = (ch > 0) ? static_cast<uint8_t>(ch - 1) : 0xff;
+    } catch (...) {
+      f.source = 0xff;
+    }
     int64_t ts_us = static_cast<int64_t>(timestamp_sec * 1e6);
 
     if (!id_str.empty() && id_str.back() == 'x') {

@@ -14,7 +14,7 @@ namespace jcan {
 
 struct nfd_filter {
   const char* name;
-  const char* spec;  // e.g. "csv,asc"
+  const char* spec;
 };
 
 class async_dialog {

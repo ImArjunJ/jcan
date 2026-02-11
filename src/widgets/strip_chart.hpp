@@ -14,38 +14,31 @@
 
 namespace jcan::widgets {
 
-/// A single trace on a strip chart.
 struct chart_trace {
   signal_key key;
   ImU32 color{IM_COL32(100, 200, 255, 255)};
   bool visible{true};
 };
 
-/// Persistent state for one strip chart.
 struct strip_chart_state {
   std::vector<chart_trace> traces;
   bool live_follow{true};
-  float view_duration_sec{10.0f};   // visible time window width
-  float view_end_offset_sec{0.0f};  // 0 = now, positive = seconds into past
+  float view_duration_sec{10.0f};
+  float view_end_offset_sec{0.0f};
 
-  // Y-axis
   bool y_auto{true};
   double y_min{0.0};
   double y_max{1.0};
 
-  // Interaction state
   bool dragging{false};
   float drag_start_offset{0.0f};
   ImVec2 drag_start_pos{};
 
-  // Pause: frozen reference time when not live-following
   signal_sample::clock::time_point pause_time{};
 
-  // Cursor
   bool cursor_active{false};
-  float cursor_time_sec{0.0f};  // relative to now
+  float cursor_time_sec{0.0f};
 
-  // Unique id counter
   static int next_id() {
     static int id = 0;
     return id++;
@@ -53,44 +46,34 @@ struct strip_chart_state {
   int id{next_id()};
 };
 
-/// Color palette for auto-assigning trace colors.
 inline ImU32 trace_color(int index) {
   static const ImU32 palette[] = {
-      IM_COL32(100, 200, 255, 255),  // cyan
-      IM_COL32(255, 100, 100, 255),  // red
-      IM_COL32(100, 255, 100, 255),  // green
-      IM_COL32(255, 200, 50, 255),   // yellow
-      IM_COL32(200, 100, 255, 255),  // purple
-      IM_COL32(255, 150, 50, 255),   // orange
-      IM_COL32(50, 255, 200, 255),   // teal
-      IM_COL32(255, 100, 200, 255),  // pink
-      IM_COL32(150, 150, 255, 255),  // light blue
-      IM_COL32(200, 255, 100, 255),  // lime
+      IM_COL32(100, 200, 255, 255), IM_COL32(255, 100, 100, 255),
+      IM_COL32(100, 255, 100, 255), IM_COL32(255, 200, 50, 255),
+      IM_COL32(200, 100, 255, 255), IM_COL32(255, 150, 50, 255),
+      IM_COL32(50, 255, 200, 255),  IM_COL32(255, 100, 200, 255),
+      IM_COL32(150, 150, 255, 255), IM_COL32(200, 255, 100, 255),
   };
   constexpr int n = sizeof(palette) / sizeof(palette[0]);
   return palette[index % n];
 }
 
-/// Draw a strip chart. Returns true if chart wants to remain open.
 inline bool draw_strip_chart(strip_chart_state& chart,
-                             const signal_store& store,
-                             float height = 200.0f) {
+                             const signal_store& store, float height = 200.0f) {
   auto real_now = signal_sample::clock::now();
 
-  // When transitioning from live to paused, freeze the reference time
-  if (!chart.live_follow && chart.pause_time == signal_sample::clock::time_point{}) {
+  if (!chart.live_follow &&
+      chart.pause_time == signal_sample::clock::time_point{}) {
     chart.pause_time = real_now;
   }
   if (chart.live_follow) {
-    chart.pause_time = {};  // clear on resume
+    chart.pause_time = {};
   }
 
-  // Use frozen time when paused so the graph doesn't drift
   auto now = chart.live_follow ? real_now : chart.pause_time;
 
   ImGui::PushID(chart.id);
 
-  // --- Chart area ---
   ImVec2 avail = ImGui::GetContentRegionAvail();
   float chart_width = avail.x;
   if (chart_width < 100.0f) chart_width = 100.0f;
@@ -98,21 +81,17 @@ inline bool draw_strip_chart(strip_chart_state& chart,
 
   ImVec2 canvas_pos = ImGui::GetCursorScreenPos();
   ImVec2 canvas_size(chart_width, height);
-  ImVec2 canvas_end(canvas_pos.x + canvas_size.x,
-                    canvas_pos.y + canvas_size.y);
+  ImVec2 canvas_end(canvas_pos.x + canvas_size.x, canvas_pos.y + canvas_size.y);
 
   auto* draw = ImGui::GetWindowDrawList();
 
-  // Background
   draw->AddRectFilled(canvas_pos, canvas_end, IM_COL32(20, 20, 25, 255));
   draw->AddRect(canvas_pos, canvas_end, IM_COL32(60, 60, 70, 255));
 
-  // Reserve the space
   ImGui::InvisibleButton("##chart_area", canvas_size);
   bool hovered = ImGui::IsItemHovered();
   bool active = ImGui::IsItemActive();
 
-  // Drop target — accept signals dragged from channel list
   bool drop_accepted = false;
   signal_key dropped_key;
   if (ImGui::BeginDragDropTarget()) {
@@ -124,7 +103,6 @@ inline bool draw_strip_chart(strip_chart_state& chart,
     ImGui::EndDragDropTarget();
   }
 
-  // --- Time axis ---
   float view_end_sec;
   if (chart.live_follow) {
     view_end_sec = 0.0f;
@@ -134,25 +112,20 @@ inline bool draw_strip_chart(strip_chart_state& chart,
   }
   float view_start_sec = view_end_sec + chart.view_duration_sec;
 
-  // time_to_x: seconds-ago → pixel x
   auto time_to_x = [&](float sec_ago) -> float {
     float frac = 1.0f - (sec_ago - view_end_sec) / chart.view_duration_sec;
     return canvas_pos.x + frac * canvas_size.x;
   };
 
-  // --- Mouse interaction ---
   ImGuiIO& io = ImGui::GetIO();
 
   if (hovered) {
-    // Claim mouse wheel so parent window doesn't scroll
     ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);
 
-    // Scroll wheel: zoom time axis
     if (io.MouseWheel != 0.0f) {
       float zoom = std::pow(1.15f, -io.MouseWheel);
-      // Zoom around mouse position
-      float mouse_frac =
-          (io.MousePos.x - canvas_pos.x) / canvas_size.x;
+
+      float mouse_frac = (io.MousePos.x - canvas_pos.x) / canvas_size.x;
       float mouse_sec_ago =
           view_end_sec + (1.0f - mouse_frac) * chart.view_duration_sec;
 
@@ -160,16 +133,13 @@ inline bool draw_strip_chart(strip_chart_state& chart,
       chart.view_duration_sec =
           std::clamp(chart.view_duration_sec, 0.1f, 36000.0f);
 
-      // Adjust offset to keep mouse position stable
       chart.view_end_offset_sec =
           mouse_sec_ago - (1.0f - mouse_frac) * chart.view_duration_sec;
-      if (chart.view_end_offset_sec < 0.0f)
-        chart.view_end_offset_sec = 0.0f;
+      if (chart.view_end_offset_sec < 0.0f) chart.view_end_offset_sec = 0.0f;
       chart.live_follow = (chart.view_end_offset_sec < 0.01f);
     }
   }
 
-  // Drag: pan time axis
   if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
     chart.dragging = true;
     chart.drag_start_offset = chart.view_end_offset_sec;
@@ -181,22 +151,19 @@ inline bool draw_strip_chart(strip_chart_state& chart,
       float dx = io.MousePos.x - chart.drag_start_pos.x;
       float sec_per_px = chart.view_duration_sec / canvas_size.x;
       chart.view_end_offset_sec = chart.drag_start_offset + dx * sec_per_px;
-      if (chart.view_end_offset_sec < 0.0f)
-        chart.view_end_offset_sec = 0.0f;
+      if (chart.view_end_offset_sec < 0.0f) chart.view_end_offset_sec = 0.0f;
     } else {
       chart.dragging = false;
       chart.live_follow = (chart.view_end_offset_sec < 0.01f);
     }
   }
 
-  // Double-click: return to live follow
   if (hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
     chart.live_follow = true;
     chart.view_end_offset_sec = 0.0f;
     chart.dragging = false;
   }
 
-  // Recalculate after interaction
   if (chart.live_follow) {
     view_end_sec = 0.0f;
     chart.view_end_offset_sec = 0.0f;
@@ -205,7 +172,6 @@ inline bool draw_strip_chart(strip_chart_state& chart,
   }
   view_start_sec = view_end_sec + chart.view_duration_sec;
 
-  // --- Y-axis auto-scale ---
   if (chart.y_auto && !chart.traces.empty()) {
     double y_lo = 1e30, y_hi = -1e30;
     bool has_data = false;
@@ -229,7 +195,7 @@ inline bool draw_strip_chart(strip_chart_state& chart,
       double range = y_hi - y_lo;
       if (range < 1e-9) range = 1.0;
       double margin = range * 0.08;
-      // Smooth towards target
+
       double target_lo = y_lo - margin;
       double target_hi = y_hi + margin;
       chart.y_min += (target_lo - chart.y_min) * 0.15;
@@ -238,16 +204,15 @@ inline bool draw_strip_chart(strip_chart_state& chart,
   }
 
   auto value_to_y = [&](double val) -> float {
-    if (std::abs(chart.y_max - chart.y_min) < 1e-15) return canvas_pos.y + canvas_size.y * 0.5f;
+    if (std::abs(chart.y_max - chart.y_min) < 1e-15)
+      return canvas_pos.y + canvas_size.y * 0.5f;
     double frac = (val - chart.y_min) / (chart.y_max - chart.y_min);
     return canvas_pos.y + static_cast<float>(1.0 - frac) * canvas_size.y;
   };
 
-  // --- Grid lines ---
   {
-    // Time grid
     float grid_step_sec = chart.view_duration_sec / 5.0f;
-    // Round to nice values
+
     float mag = std::pow(10.0f, std::floor(std::log10(grid_step_sec)));
     float norm = grid_step_sec / mag;
     if (norm < 1.5f)
@@ -265,7 +230,7 @@ inline bool draw_strip_chart(strip_chart_state& chart,
       if (x >= canvas_pos.x && x <= canvas_end.x) {
         draw->AddLine(ImVec2(x, canvas_pos.y), ImVec2(x, canvas_end.y),
                       IM_COL32(50, 50, 60, 255));
-        // Label
+
         std::string label;
         if (t < 0.01f && t > -0.01f)
           label = "now";
@@ -277,7 +242,6 @@ inline bool draw_strip_chart(strip_chart_state& chart,
       t += grid_step_sec;
     }
 
-    // Y grid
     double y_range = chart.y_max - chart.y_min;
     if (y_range > 1e-15) {
       double y_step = y_range / 4.0;
@@ -307,7 +271,6 @@ inline bool draw_strip_chart(strip_chart_state& chart,
     }
   }
 
-  // --- Draw traces ---
   draw->PushClipRect(canvas_pos, canvas_end, true);
 
   for (const auto& tr : chart.traces) {
@@ -315,7 +278,6 @@ inline bool draw_strip_chart(strip_chart_state& chart,
     const auto* samps = store.samples(tr.key);
     if (!samps || samps->empty()) continue;
 
-    // Min/max decimation: bin samples into pixel columns
     struct bin {
       float y_min, y_max, y_first, y_last;
       bool used{false};
@@ -344,21 +306,19 @@ inline bool draw_strip_chart(strip_chart_state& chart,
       }
     }
 
-    // Draw: connect bins with lines, draw vertical min-max bars
     float prev_x = 0.0f;
     float prev_y = 0.0f;
     bool has_prev = false;
     for (int px = 0; px < pixel_width; ++px) {
       auto& b = bins[static_cast<std::size_t>(px)];
-      if (!b.used) continue;  // skip empty bins, keep prev valid
+      if (!b.used) continue;
       float x = canvas_pos.x + static_cast<float>(px) + 0.5f;
 
       if (has_prev) {
-        draw->AddLine(ImVec2(prev_x, prev_y), ImVec2(x, b.y_first),
-                      tr.color, 1.5f);
+        draw->AddLine(ImVec2(prev_x, prev_y), ImVec2(x, b.y_first), tr.color,
+                      1.5f);
       }
 
-      // Vertical bar for this pixel column
       if (b.y_min != b.y_max) {
         draw->AddLine(ImVec2(x, b.y_min), ImVec2(x, b.y_max), tr.color, 1.5f);
       }
@@ -371,21 +331,16 @@ inline bool draw_strip_chart(strip_chart_state& chart,
 
   draw->PopClipRect();
 
-  // --- Cursor ---
   if (hovered && !chart.dragging) {
     float mouse_x = io.MousePos.x;
     if (mouse_x >= canvas_pos.x && mouse_x <= canvas_end.x) {
-      // Vertical cursor line
       draw->AddLine(ImVec2(mouse_x, canvas_pos.y),
                     ImVec2(mouse_x, canvas_end.y),
                     IM_COL32(200, 200, 200, 100));
 
-      // Calculate time at cursor
       float frac = (mouse_x - canvas_pos.x) / canvas_size.x;
-      float cursor_age =
-          view_end_sec + (1.0f - frac) * chart.view_duration_sec;
+      float cursor_age = view_end_sec + (1.0f - frac) * chart.view_duration_sec;
 
-      // Find nearest sample for each trace and show tooltip
       if (!chart.traces.empty()) {
         ImGui::BeginTooltip();
         ImGui::Text("-%.2fs", cursor_age);
@@ -395,7 +350,6 @@ inline bool draw_strip_chart(strip_chart_state& chart,
           const auto* samps = store.samples(tr.key);
           if (!samps || samps->empty()) continue;
 
-          // Find closest sample
           double best_val = 0.0;
           float best_dist = 1e30f;
           for (const auto& s : *samps) {
@@ -416,7 +370,6 @@ inline bool draw_strip_chart(strip_chart_state& chart,
     }
   }
 
-  // --- Legend / controls bar ---
   {
     if (!chart.live_follow) {
       ImGui::SameLine();
@@ -426,7 +379,6 @@ inline bool draw_strip_chart(strip_chart_state& chart,
       }
     }
 
-    // Show trace names as colored text
     for (std::size_t i = 0; i < chart.traces.size(); ++i) {
       auto& tr = chart.traces[i];
       ImVec4 col = ImGui::ColorConvertU32ToFloat4(tr.color);
@@ -443,20 +395,20 @@ inline bool draw_strip_chart(strip_chart_state& chart,
       }
       ImGui::PopStyleColor();
 
-      // Right-click to remove
       if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
-        chart.traces.erase(chart.traces.begin() +
-                           static_cast<long>(i));
+        chart.traces.erase(chart.traces.begin() + static_cast<long>(i));
         --i;
       }
     }
   }
 
-  // Handle drop — add trace if not already present
   if (drop_accepted) {
     bool already = false;
     for (const auto& tr : chart.traces) {
-      if (tr.key == dropped_key) { already = true; break; }
+      if (tr.key == dropped_key) {
+        already = true;
+        break;
+      }
     }
     if (!already) {
       chart_trace new_tr;
