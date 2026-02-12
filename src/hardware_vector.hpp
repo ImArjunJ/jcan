@@ -235,8 +235,11 @@ struct vector_xl {
 
     uint8_t payload_len = frame_payload_len(frame);
 
-    uint32_t total_size = (static_cast<uint32_t>(payload_len) + 31u) & ~3u;
-    std::array<uint8_t, 128> buf{};
+    uint32_t inner_size = (static_cast<uint32_t>(payload_len) + 31u) & ~3u;
+
+    constexpr size_t k_hdr = 4;  // transport header size
+    uint32_t wire_size = k_hdr + inner_size;
+    std::array<uint8_t, 132> buf{};
 
     auto put_le32 = [&](size_t off, uint32_t v) {
       buf[off + 0] = static_cast<uint8_t>(v);
@@ -249,27 +252,40 @@ struct vector_xl {
       buf[off + 1] = static_cast<uint8_t>(v >> 8);
     };
 
-    put_le32(0, total_size);
-    put_le16(4, 0);
-    put_le16(6, 0x0440);
+    put_le16(0, static_cast<uint16_t>(inner_size));
+    put_le16(2, static_cast<uint16_t>(channel_));
+
+    put_le32(k_hdr + 0, inner_size);
+    put_le16(k_hdr + 4, 0x0440);
     uint32_t uhandle = (static_cast<uint32_t>(channel_) << 24);
-    put_le32(8, uhandle);
+    put_le32(k_hdr + 8, uhandle);
 
     uint32_t msg_ctrl = frame.dlc & 0x0F;
     if (frame.extended) msg_ctrl |= 0x20;
     if (frame.fd && frame.brs) msg_ctrl |= 0x80;
     if (frame.fd) msg_ctrl |= 0x4000;
     if (frame.rtr) msg_ctrl |= 0x10;
-    put_le32(12, msg_ctrl);
+    put_le32(k_hdr + 16, msg_ctrl);
 
-    put_le32(16, frame.id);
-    buf[20] = 0;
+    put_le32(k_hdr + 20, frame.id);
+    buf[k_hdr + 24] = 0;  // txAtt
 
-    std::memcpy(&buf[24], frame.data.data(), payload_len);
+    std::memcpy(&buf[k_hdr + 28], frame.data.data(), payload_len);
+
+    if (debug()) {
+      std::fprintf(stderr,
+                   "[vector] TX: wire=%u inner=%u tag=0x0440 uHdl=0x%08X "
+                   "msgCtrl=0x%08X canID=0x%08X dlc=%u ch=%u",
+                   wire_size, inner_size, uhandle, msg_ctrl, frame.id,
+                   frame.dlc, channel_);
+      for (uint8_t i = 0; i < std::min(payload_len, uint8_t{8}); ++i)
+        std::fprintf(stderr, " %02X", frame.data[i]);
+      std::fprintf(stderr, "\n");
+    }
 
     int transferred = 0;
     int r = libusb_bulk_transfer(dev_, vector::k_ep_tx_data_out, buf.data(),
-                                 static_cast<int>(total_size), &transferred,
+                                 static_cast<int>(wire_size), &transferred,
                                  vector::k_tx_timeout_ms);
     if (r < 0) {
       if (debug())
@@ -838,7 +854,7 @@ struct vector_xl {
       f.rtr = (msg_ctrl & (1u << 4)) != 0;
 
       uint8_t payload_len = frame_payload_len(f);
-      size_t data_offset = (size >= 96) ? 0x40 : 0x28;
+      constexpr size_t data_offset = 0x30;  // from driver RE
       if (data_offset + payload_len <= size) {
         std::memcpy(f.data.data(), data + data_offset, payload_len);
       }
