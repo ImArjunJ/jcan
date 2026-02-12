@@ -16,7 +16,7 @@ a can bus tool i built because the existing options on linux are either ancient,
 
 | adapter                            | interface      | notes                                                  |
 | ---------------------------------- | -------------- | ------------------------------------------------------ |
-| vector vn1640a                     | usb (libusb)   | reverse-engineered, see above                          |
+| vector vn1640a                     | usb (libusb)   | n/a                                                    |
 | kvaser leaf                        | usb (libusb)   | cross-platform, ported from linuxcan gpl source        |
 | kvaser mhydra (memorator pro, etc) | usb (libusb)   | hydra protocol, cross-platform, 30 device PIDs         |
 | kvaser (any socketcan-supported)   | socketcan      | auto-configures bitrate and link state, sudo elevation |
