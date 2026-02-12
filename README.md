@@ -100,6 +100,7 @@ conditional features:
 if you are on windows, you must still install drivers:
 
 - candapter FTDI: https://ftdichip.com/wp-content/uploads/2025/03/CDM-v2.12.36.20-WHQL-Certified.zip
+- proprietary: install the vendor drivers
 - other: https://github.com/daynix/UsbDk/releases
 
 ## todo

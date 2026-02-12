@@ -433,6 +433,11 @@ struct app_state {
     auto bitrate = static_cast<slcan_bitrate>(selected_bitrate);
     if (auto r = adapter_open(slot->hw, desc.port, bitrate); !r) {
       if (r.error() == error_code::permission_denied) {
+#ifdef _WIN32
+        status_text =
+            std::format("Access denied: {} - device may be held by a vendor driver", desc.port);
+        return;
+#else
         status_text =
             std::format("Permission denied: {} - requesting fix...", desc.port);
         if (install_udev_rule()) {
@@ -448,6 +453,7 @@ struct app_state {
           status_text = "Permission fix cancelled.";
           return;
         }
+#endif
       } else {
         status_text = std::format("Open failed: {}", to_string(r.error()));
         return;

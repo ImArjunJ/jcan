@@ -15,6 +15,9 @@
 #ifdef JCAN_HAS_KVASER
 #include "hardware_kvaser.hpp"
 #endif
+#ifdef _WIN32
+#include "hardware_kvaser_canlib.hpp"
+#endif
 
 namespace jcan
 {
@@ -299,6 +302,20 @@ namespace jcan
         }
 #endif
 
+#ifdef _WIN32
+        {
+            auto canlib_channels = canlib::enumerate_channels();
+            for (const auto& ch : canlib_channels)
+            {
+                device_descriptor d;
+                d.kind = adapter_kind::kvaser_canlib;
+                d.port = std::format("canlib:{}", ch.canlib_channel);
+                d.friendly_name = std::format("{} CH{}", ch.device_name, ch.channel_on_card + 1);
+                out.push_back(std::move(d));
+            }
+        }
+#endif
+
 #if !defined(JCAN_HAS_SOCKETCAN) && (defined(JCAN_HAS_VECTOR) || defined(JCAN_HAS_KVASER))
         {
             libusb_context* usb_ctx = nullptr;
@@ -363,6 +380,10 @@ namespace jcan
 #ifdef JCAN_HAS_KVASER
                     if (vid == 0x0BFD)
                     {
+#ifdef _WIN32
+                        // On Windows, always skip libusb for Kvaser — use canlib backend instead
+                        continue;
+#endif
                         std::string product;
                         if (udesc.iProduct)
                         {
