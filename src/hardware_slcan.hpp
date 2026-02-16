@@ -52,7 +52,16 @@ struct serial_slcan {
 
     auto br_cmd = std::format("S{}\r", static_cast<int>(bitrate));
     if (auto r = send_command(br_cmd); !r) return r;
+
+    // Set acceptance filter to pass all frames (standard + extended).
+    // Errors are ignored because not all SLCAN firmwares support M/m.
+    (void)send_command("M00000000\r");
+    (void)send_command("mFFFFFFFF\r");
+
     if (auto r = send_command("O\r"); !r) return r;
+
+    // Flush any pending command responses from the receive buffer.
+    sp_flush(port_, SP_BUF_INPUT);
 
     return {};
   }
@@ -118,7 +127,7 @@ struct serial_slcan {
 
       std::string_view line(rx_accum_.data() + start, cr - start);
 
-      auto cmd_pos = line.find_first_of("tTrRF");
+      auto cmd_pos = line.find_first_of("tTrRxXF");
       if (cmd_pos != std::string_view::npos) {
         line = line.substr(cmd_pos);
         auto parsed = parse_slcan(line);
@@ -180,6 +189,7 @@ struct serial_slcan {
         f.rtr = false;
         break;
       case 'T':
+      case 'x':
         id_len = 8;
         f.extended = true;
         f.rtr = false;
@@ -190,6 +200,7 @@ struct serial_slcan {
         f.rtr = true;
         break;
       case 'R':
+      case 'X':
         id_len = 8;
         f.extended = true;
         f.rtr = true;
