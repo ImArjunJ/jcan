@@ -53,14 +53,11 @@ struct serial_slcan {
     auto br_cmd = std::format("S{}\r", static_cast<int>(bitrate));
     if (auto r = send_command(br_cmd); !r) return r;
 
-    // Set acceptance filter to pass all frames (standard + extended).
-    // Errors are ignored because not all SLCAN firmwares support M/m.
     (void)send_command("M00000000\r");
     (void)send_command("mFFFFFFFF\r");
 
     if (auto r = send_command("O\r"); !r) return r;
 
-    // Flush any pending command responses from the receive buffer.
     sp_flush(port_, SP_BUF_INPUT);
 
     return {};
