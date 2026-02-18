@@ -121,9 +121,32 @@ inline void draw_connection_panel(app_state& state) {
   bool can_connect = !state.devices.empty();
   if (!can_connect) ImGui::BeginDisabled();
   if (ImGui::Button("Connect", ImVec2(120, 0))) {
-    state.connect();
+    if (state.log_mode) {
+      ImGui::OpenPopup("##connect_confirm");
+    } else {
+      state.connect();
+    }
   }
   if (!can_connect) ImGui::EndDisabled();
+
+  if (ImGui::BeginPopupModal("##connect_confirm", nullptr,
+                              ImGuiWindowFlags_AlwaysAutoResize)) {
+    ImGui::Text("Connecting will clear the loaded log and all overlays.");
+    ImGui::Spacing();
+    if (ImGui::Button("Continue", ImVec2(120, 0))) {
+      state.log_mode = false;
+      state.clear_monitor();
+      state.imported_frames.clear();
+      state.log_channels.clear();
+      state.connect();
+      ImGui::CloseCurrentPopup();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+      ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
+  }
 
   if (state.adapter_slots.size() > 1) {
     ImGui::SameLine();
