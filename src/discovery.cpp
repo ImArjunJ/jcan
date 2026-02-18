@@ -461,6 +461,12 @@ namespace jcan
             .friendly_name = "Virtual Mock Adapter",
         });
 
+        out.push_back(device_descriptor{
+            .kind = adapter_kind::mock_echo,
+            .port = "echo0",
+            .friendly_name = "Virtual Echo Adapter",
+        });
+
         return out;
     }
 

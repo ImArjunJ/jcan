@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <cstdlib>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <thread>
@@ -79,6 +80,68 @@ struct mock_adapter {
       frames.push_back(f);
     }
     return frames;
+  }
+};
+
+struct mock_echo_adapter {
+  struct shared_state {
+    std::mutex mtx;
+    std::vector<can_frame> pending;
+  };
+
+  bool open_{false};
+  std::shared_ptr<shared_state> state_ = std::make_shared<shared_state>();
+
+  [[nodiscard]] result<> open(
+      const std::string&,
+      [[maybe_unused]] slcan_bitrate bitrate = slcan_bitrate::s6,
+      [[maybe_unused]] unsigned baud = 0) {
+    if (open_) return std::unexpected(error_code::already_open);
+    open_ = true;
+    {
+      std::lock_guard lk(state_->mtx);
+      state_->pending.clear();
+    }
+    return {};
+  }
+
+  [[nodiscard]] result<> close() {
+    if (!open_) return std::unexpected(error_code::not_open);
+    open_ = false;
+    return {};
+  }
+
+  [[nodiscard]] result<> send(const can_frame& frame) {
+    if (!open_) return std::unexpected(error_code::not_open);
+    std::lock_guard lk(state_->mtx);
+    can_frame echo = frame;
+    echo.timestamp = can_frame::clock::now();
+    state_->pending.push_back(echo);
+    return {};
+  }
+
+  [[nodiscard]] result<std::optional<can_frame>> recv(
+      unsigned timeout_ms = 100) {
+    auto batch = recv_many(timeout_ms);
+    if (!batch) return std::unexpected(batch.error());
+    if (batch->empty()) return std::optional<can_frame>{std::nullopt};
+    return std::optional<can_frame>{batch->front()};
+  }
+
+  [[nodiscard]] result<std::vector<can_frame>> recv_many(
+      [[maybe_unused]] unsigned timeout_ms = 100) {
+    if (!open_) return std::unexpected(error_code::not_open);
+
+    std::vector<can_frame> out;
+    {
+      std::lock_guard lk(state_->mtx);
+      out.swap(state_->pending);
+    }
+
+    if (out.empty()) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    return out;
   }
 };
 

@@ -370,7 +370,7 @@ int main()
                     }
                     if (ImGui::MenuItem("Import Log...", "Ctrl+I", false, !file_dialog.busy()))
                     {
-                        file_dialog.open_file({{"CSV / ASC Log", "csv,asc"}});
+                        file_dialog.open_file({{"All Logs", "csv,asc,ld"}, {"MoTec i2", "ld"}, {"CSV / ASC", "csv,asc"}});
                         pending_dialog = dialog_id::import_log;
                     }
                     if (!state.replaying.load())
@@ -507,7 +507,7 @@ int main()
             }
             if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_I) && !file_dialog.busy())
             {
-                file_dialog.open_file({{"CSV / ASC Log", "csv,asc"}});
+                file_dialog.open_file({{"All Logs", "csv,asc,ld"}, {"MoTec i2", "ld"}, {"CSV / ASC", "csv,asc"}});
                 pending_dialog = dialog_id::import_log;
             }
 
@@ -569,26 +569,70 @@ int main()
                     if (*result)
                     {
                         auto& path_str = **result;
-                        std::vector<std::pair<int64_t, jcan::can_frame>> frames;
-                        if (path_str.size() >= 4 && path_str.substr(path_str.size() - 4) == ".asc")
-                            frames = jcan::frame_logger::load_asc(path_str);
-                        else
-                            frames = jcan::frame_logger::load_csv(path_str);
-                        if (!frames.empty())
-                        {
-                            float dur = state.import_log(std::move(frames));
-                            state.status_text = std::format("Imported {} frames ({:.1f}s)", state.scrollback.size(), dur);
+                        auto ext = std::filesystem::path(path_str).extension().string();
+                        for (auto& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
 
-                            for (auto& c : plotter.charts)
+                        if (ext == ".ld")
+                        {
+                            auto ld_result = jcan::motec::load_ld(path_str);
+                            if (ld_result)
                             {
-                                c.view_duration_sec = dur * 1.05f;
-                                c.view_end_offset_sec = 0.0f;
-                                c.live_follow = false;
+                                auto& ld = *ld_result;
+                                float dur = state.import_motec(ld);
+
+                                std::string meta;
+                                if (!ld.driver.empty()) meta += ld.driver;
+                                if (!ld.venue.name.empty())
+                                {
+                                    if (!meta.empty()) meta += " @ ";
+                                    meta += ld.venue.name;
+                                }
+                                if (!ld.event.session.empty())
+                                {
+                                    if (!meta.empty()) meta += " - ";
+                                    meta += ld.event.session;
+                                }
+
+                                state.status_text = std::format(
+                                    "MoTec: {} channels, {:.1f}s{}",
+                                    ld.channels.size(), dur,
+                                    meta.empty() ? "" : " [" + meta + "]");
+
+                                for (auto& c : plotter.charts)
+                                {
+                                    c.view_duration_sec = dur * 1.05f;
+                                    c.view_end_offset_sec = 0.0f;
+                                    c.live_follow = false;
+                                }
+                            }
+                            else
+                            {
+                                state.status_text = std::format("MoTec import failed: {}", ld_result.error());
                             }
                         }
                         else
                         {
-                            state.status_text = "Import failed (no frames)";
+                            std::vector<std::pair<int64_t, jcan::can_frame>> frames;
+                            if (ext == ".asc")
+                                frames = jcan::frame_logger::load_asc(path_str);
+                            else
+                                frames = jcan::frame_logger::load_csv(path_str);
+                            if (!frames.empty())
+                            {
+                                float dur = state.import_log(std::move(frames));
+                                state.status_text = std::format("Imported {} frames ({:.1f}s)", state.scrollback.size(), dur);
+
+                                for (auto& c : plotter.charts)
+                                {
+                                    c.view_duration_sec = dur * 1.05f;
+                                    c.view_end_offset_sec = 0.0f;
+                                    c.live_follow = false;
+                                }
+                            }
+                            else
+                            {
+                                state.status_text = "Import failed (no frames)";
+                            }
                         }
                     }
                     break;

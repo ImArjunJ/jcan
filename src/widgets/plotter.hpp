@@ -74,7 +74,7 @@ inline void draw_plotter(app_state& state, plotter_state& ps) {
     return;
   }
 
-  if (!state.any_dbc_loaded()) {
+  if (!state.any_dbc_loaded() && state.signals.channel_count() == 0) {
     ImGui::TextDisabled(
         "No DBC loaded -- use File > Load DBC, Connection window, or drag & "
         "drop");
@@ -86,7 +86,9 @@ inline void draw_plotter(app_state& state, plotter_state& ps) {
 
   if (ImGui::BeginChild("##sidebar", ImVec2(sidebar_width, 0), true)) {
     auto msg_name_fn = [&state](uint32_t id) -> std::string {
-      return state.any_message_name(id);
+      auto name = state.any_message_name(id);
+      if (name.empty() && id == 0) return "MoTec";
+      return name;
     };
     auto is_on = [&ps](const signal_key& key) -> bool {
       return is_signal_on_any_chart(ps, key);

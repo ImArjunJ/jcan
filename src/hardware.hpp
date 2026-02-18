@@ -31,7 +31,7 @@ namespace jcan
 #ifdef _WIN32
                                  kvaser_canlib,
 #endif
-                                 mock_adapter>;
+                                 mock_adapter, mock_echo_adapter>;
 
     [[nodiscard]] inline result<> adapter_open(adapter& a, const std::string& port, slcan_bitrate bitrate = slcan_bitrate::s6, unsigned baud = 115200)
     {
@@ -80,6 +80,8 @@ namespace jcan
 #endif
         case adapter_kind::mock:
             return mock_adapter{};
+        case adapter_kind::mock_echo:
+            return mock_echo_adapter{};
         case adapter_kind::unbound:
             return mock_adapter{};
         }

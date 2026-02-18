@@ -25,6 +25,7 @@
 
 struct ImFont;
 #include "logger.hpp"
+#include "motec_ld.hpp"
 #include "permissions.hpp"
 #include "signal_store.hpp"
 #include "tx_scheduler.hpp"
@@ -748,6 +749,57 @@ struct app_state {
         }
       }
     }
+  }
+
+  float import_motec(const motec::ld_file& ld) {
+    if (ld.channels.empty()) return 0.f;
+
+    log_mode = true;
+    log_dbc.clear();
+    dbc.unload();
+    clear_monitor();
+    imported_frames.clear();
+    log_channels.clear();
+
+    double duration_sec = ld.duration_seconds();
+    if (duration_sec < 0.1) duration_sec = 1.0;
+
+    if (duration_sec > signals.max_seconds()) {
+      signals.set_max_seconds(duration_sec * 1.1);
+    }
+
+    auto now = can_frame::clock::now();
+    auto log_duration = std::chrono::duration_cast<can_frame::clock::duration>(
+        std::chrono::duration<double>(duration_sec));
+    auto base_time = now - log_duration;
+
+    first_frame_time = base_time;
+    has_first_frame = true;
+
+    constexpr uint32_t motec_msg_id = 0;
+
+    for (const auto& ch : ld.channels) {
+      if (ch.samples.empty() || ch.freq_hz == 0) continue;
+
+      signal_key key{.msg_id = motec_msg_id, .name = ch.name};
+
+      double ch_min = ch.samples[0];
+      double ch_max = ch.samples[0];
+      for (double v : ch.samples) {
+        ch_min = std::min(ch_min, v);
+        ch_max = std::max(ch_max, v);
+      }
+
+      double sample_period = 1.0 / static_cast<double>(ch.freq_hz);
+      for (std::size_t i = 0; i < ch.samples.size(); ++i) {
+        double t_sec = static_cast<double>(i) * sample_period;
+        auto t = base_time + std::chrono::duration_cast<can_frame::clock::duration>(
+                                 std::chrono::duration<double>(t_sec));
+        signals.push(key, t, ch.samples[i], ch.unit, ch_min, ch_max);
+      }
+    }
+
+    return static_cast<float>(duration_sec);
   }
 };
 

@@ -121,6 +121,7 @@ namespace jcan
         kvaser_usb,
         kvaser_canlib,
         mock,
+        mock_echo,
         unbound,
     };
 
