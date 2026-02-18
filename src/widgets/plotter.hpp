@@ -116,10 +116,11 @@ inline void draw_plotter(app_state& state, plotter_state& ps) {
       ps.charts.emplace_back();
     }
     ImGui::SameLine();
-    ImGui::TextDisabled("(%zu chart%s, %zu channels, %zu samples)  Scroll=Zoom  Drag=Pan  W=Fit%s",
+    ImGui::TextDisabled("(%zu chart%s, %zu channels, %zu samples)  Scroll=Zoom  Drag=Pan  W=Fit%s%s",
                         ps.charts.size(), ps.charts.size() != 1 ? "s" : "",
                         state.signals.channel_count(),
                         state.signals.total_samples(),
+                        state.overlay_layers.empty() ? "" : "  RClick+Drag=Shift Trace",
                         state.log_mode ? "" : "  Space=Pause");
 
     if (!ps.charts.empty() && !state.log_mode) {
@@ -229,7 +230,28 @@ inline void draw_plotter(app_state& state, plotter_state& ps) {
 
     if (ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows) &&
         ImGui::IsKeyPressed(ImGuiKey_W)) {
-      ps.shared_duration = static_cast<float>(state.signals.max_seconds());
+      auto fit_now = signal_sample::clock::now();
+      float oldest_age = 0.f;
+      auto fit_channels = state.signals.all_channels();
+      for (const auto* ch : fit_channels) {
+        const auto* samps = state.signals.samples(ch->key);
+        if (samps && !samps->empty()) {
+          float age = std::chrono::duration<float>(fit_now - samps->front().time).count();
+          oldest_age = std::max(oldest_age, age);
+        }
+      }
+      for (const auto& ov : state.overlay_layers) {
+        auto ov_channels = ov.signals.all_channels();
+        for (const auto* ch : ov_channels) {
+          const auto* samps = ov.signals.samples(ch->key);
+          if (samps && !samps->empty()) {
+            float age = std::chrono::duration<float>(fit_now - samps->front().time).count();
+            oldest_age = std::max(oldest_age, age);
+          }
+        }
+      }
+      if (oldest_age < 0.1f) oldest_age = 10.f;
+      ps.shared_duration = oldest_age * 1.05f;
       ps.shared_offset = 0.0f;
       if (!state.log_mode) ps.shared_live = true;
     }

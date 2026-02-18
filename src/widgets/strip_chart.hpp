@@ -212,7 +212,7 @@ inline bool draw_strip_chart(strip_chart_state& chart,
   }
 
   if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right) &&
-      !chart.traces.empty()) {
+      !chart.traces.empty() && !overlay_layers.empty()) {
     float mouse_age = view_end_sec +
         (1.0f - (io.MousePos.x - canvas_pos.x) / canvas_size.x) *
             chart.view_duration_sec;
