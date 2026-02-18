@@ -19,6 +19,20 @@ struct chart_trace {
   signal_key key;
   ImU32 color{IM_COL32(100, 200, 255, 255)};
   bool visible{true};
+  int layer_idx{-1};
+  float time_offset_sec{0.f};
+};
+
+struct signal_drag_payload {
+    signal_key key;
+    int layer_idx{-1};
+};
+
+struct layer_store_ref {
+    const signal_store* store{nullptr};
+    float* time_offset_sec{nullptr};
+    bool visible{true};
+    int layer_idx{0};
 };
 
 struct strip_chart_state {
@@ -34,6 +48,11 @@ struct strip_chart_state {
   bool dragging{false};
   float drag_start_offset{0.0f};
   ImVec2 drag_start_pos{};
+
+  bool rdrag_active{false};
+  int rdrag_trace_idx{-1};
+  float rdrag_start_offset{0.f};
+  ImVec2 rdrag_start_pos{};
 
   signal_sample::clock::time_point pause_time{};
 
@@ -66,9 +85,24 @@ inline int global_trace_count(const std::vector<strip_chart_state>& charts) {
 }
 
 inline bool draw_strip_chart(strip_chart_state& chart,
-                             const signal_store& store,
+                             const signal_store& primary_store,
+                             const std::vector<layer_store_ref>& overlay_layers,
                              const jcan::semantic_colors& colors,
                              float height = 200.0f) {
+  auto resolve_store = [&](const chart_trace& tr)
+      -> std::pair<const signal_store*, float> {
+    float off = tr.time_offset_sec;
+    if (tr.layer_idx < 0) return {&primary_store, off};
+    for (const auto& l : overlay_layers) {
+      if (l.layer_idx == tr.layer_idx) {
+        if (!l.visible) return {nullptr, 0.0f};
+        if (l.time_offset_sec) off += *l.time_offset_sec;
+        return {l.store, off};
+      }
+    }
+    return {nullptr, 0.0f};
+  };
+
   auto real_now = signal_sample::clock::now();
 
   if (!chart.live_follow &&
@@ -111,10 +145,12 @@ inline bool draw_strip_chart(strip_chart_state& chart,
 
   bool drop_accepted = false;
   signal_key dropped_key;
+  int dropped_layer_idx = -1;
   if (ImGui::BeginDragDropTarget()) {
-    if (const auto* payload = ImGui::AcceptDragDropPayload("SIGNAL_KEY")) {
-      auto* key = *static_cast<const signal_key* const*>(payload->Data);
-      dropped_key = *key;
+    if (const auto* payload = ImGui::AcceptDragDropPayload("SIGNAL_DRAG")) {
+      auto* drag = *static_cast<const signal_drag_payload* const*>(payload->Data);
+      dropped_key = drag->key;
+      dropped_layer_idx = drag->layer_idx;
       drop_accepted = true;
     }
     ImGui::EndDragDropTarget();
@@ -175,6 +211,54 @@ inline bool draw_strip_chart(strip_chart_state& chart,
     }
   }
 
+  if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right) &&
+      !chart.traces.empty()) {
+    float mouse_age = view_end_sec +
+        (1.0f - (io.MousePos.x - canvas_pos.x) / canvas_size.x) *
+            chart.view_duration_sec;
+    float mouse_y = static_cast<float>(
+        chart.y_min + (1.0 - (io.MousePos.y - canvas_pos.y) / canvas_size.y) *
+                          (chart.y_max - chart.y_min));
+
+    int best_trace = -1;
+    float best_dist = 1e30f;
+    for (int ti = 0; ti < static_cast<int>(chart.traces.size()); ++ti) {
+      auto& tr = chart.traces[ti];
+      if (!tr.visible) continue;
+      auto [ts, toff] = resolve_store(tr);
+      if (!ts) continue;
+      const auto* samps = ts->samples(tr.key);
+      if (!samps || samps->empty()) continue;
+      for (const auto& s : *samps) {
+        float age = std::chrono::duration<float>(now - s.time).count() + toff;
+        if (std::abs(age - mouse_age) > chart.view_duration_sec * 0.1f) continue;
+        float dist = std::abs(static_cast<float>(s.value) - mouse_y);
+        if (dist < best_dist) {
+          best_dist = dist;
+          best_trace = ti;
+        }
+      }
+    }
+    if (best_trace >= 0) {
+      chart.rdrag_active = true;
+      chart.rdrag_trace_idx = best_trace;
+      chart.rdrag_start_offset = chart.traces[best_trace].time_offset_sec;
+      chart.rdrag_start_pos = io.MousePos;
+    }
+  }
+  if (chart.rdrag_active) {
+    if (ImGui::IsMouseDown(ImGuiMouseButton_Right) &&
+        chart.rdrag_trace_idx >= 0 &&
+        chart.rdrag_trace_idx < static_cast<int>(chart.traces.size())) {
+      float dx = io.MousePos.x - chart.rdrag_start_pos.x;
+      float sec_per_px = chart.view_duration_sec / canvas_size.x;
+      chart.traces[chart.rdrag_trace_idx].time_offset_sec =
+          chart.rdrag_start_offset - dx * sec_per_px;
+    } else {
+      chart.rdrag_active = false;
+    }
+  }
+
   if (hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
     chart.live_follow = true;
     chart.view_end_offset_sec = 0.0f;
@@ -195,11 +279,13 @@ inline bool draw_strip_chart(strip_chart_state& chart,
 
     for (const auto& tr : chart.traces) {
       if (!tr.visible) continue;
-      const auto* samps = store.samples(tr.key);
+      auto [ya_store, ya_off] = resolve_store(tr);
+      if (!ya_store) continue;
+      const auto* samps = ya_store->samples(tr.key);
       if (!samps || samps->empty()) continue;
 
       for (const auto& s : *samps) {
-        float age = std::chrono::duration<float>(now - s.time).count();
+        float age = std::chrono::duration<float>(now - s.time).count() + ya_off;
         if (age < view_start_sec && age >= view_end_sec) {
           y_lo = std::min(y_lo, s.value);
           y_hi = std::max(y_hi, s.value);
@@ -292,7 +378,9 @@ inline bool draw_strip_chart(strip_chart_state& chart,
 
   for (const auto& tr : chart.traces) {
     if (!tr.visible) continue;
-    const auto* samps = store.samples(tr.key);
+    auto [tr_store, tr_off] = resolve_store(tr);
+    if (!tr_store) continue;
+    const auto* samps = tr_store->samples(tr.key);
     if (!samps || samps->empty()) continue;
 
     struct bin {
@@ -304,7 +392,7 @@ inline bool draw_strip_chart(strip_chart_state& chart,
     std::vector<bin> bins(static_cast<std::size_t>(pixel_width));
 
     for (const auto& s : *samps) {
-      float age = std::chrono::duration<float>(now - s.time).count();
+      float age = std::chrono::duration<float>(now - s.time).count() + tr_off;
       if (age > view_start_sec || age < view_end_sec) continue;
 
       float x = time_to_x(age);
@@ -364,13 +452,15 @@ inline bool draw_strip_chart(strip_chart_state& chart,
         ImGui::Separator();
         for (const auto& tr : chart.traces) {
           if (!tr.visible) continue;
-          const auto* samps = store.samples(tr.key);
+          auto [tt_store, tt_off] = resolve_store(tr);
+          if (!tt_store) continue;
+          const auto* samps = tt_store->samples(tr.key);
           if (!samps || samps->empty()) continue;
 
           double best_val = 0.0;
           float best_dist = 1e30f;
           for (const auto& s : *samps) {
-            float age = std::chrono::duration<float>(now - s.time).count();
+            float age = std::chrono::duration<float>(now - s.time).count() + tt_off;
             float dist = std::abs(age - cursor_age);
             if (dist < best_dist) {
               best_dist = dist;
@@ -403,7 +493,8 @@ inline bool draw_strip_chart(strip_chart_state& chart,
       if (i > 0) ImGui::SameLine();
 
       ImGui::PushStyleColor(ImGuiCol_Text, col);
-      const auto* ch = store.channel(tr.key);
+      auto [lg_store, lg_off] = resolve_store(tr);
+      const auto* ch = lg_store ? lg_store->channel(tr.key) : nullptr;
       if (ch) {
         ImGui::Text("%s: %.4g%s", tr.key.name.c_str(), ch->last_value,
                     ch->unit.empty() ? "" : (" " + ch->unit).c_str());
@@ -422,7 +513,7 @@ inline bool draw_strip_chart(strip_chart_state& chart,
   if (drop_accepted) {
     bool already = false;
     for (const auto& tr : chart.traces) {
-      if (tr.key == dropped_key) {
+      if (tr.key == dropped_key && tr.layer_idx == dropped_layer_idx) {
         already = true;
         break;
       }
@@ -432,6 +523,7 @@ inline bool draw_strip_chart(strip_chart_state& chart,
       new_tr.key = dropped_key;
       static int s_global_color_idx = 0;
       new_tr.color = trace_color(s_global_color_idx++);
+      new_tr.layer_idx = dropped_layer_idx;
       chart.traces.push_back(std::move(new_tr));
     }
   }

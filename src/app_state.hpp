@@ -200,6 +200,26 @@ struct app_state {
   std::filesystem::path log_dir;
   std::string session_log_path;
   signal_store signals;
+
+  struct log_layer {
+    std::string name;
+    std::string path;
+    signal_store signals;
+    bool visible{true};
+    float time_offset_sec{0.0f};
+    float duration_sec{0.0f};
+    ImU32 tint{IM_COL32(255, 255, 255, 255)};
+    signal_sample::clock::time_point base_time{};
+  };
+  std::vector<log_layer> overlay_layers;
+  signal_sample::clock::time_point primary_base_time{};
+
+  static constexpr ImU32 layer_tints[] = {
+      IM_COL32(255, 160, 80, 255),  IM_COL32(80, 200, 255, 255),
+      IM_COL32(255, 100, 200, 255), IM_COL32(180, 255, 100, 255),
+      IM_COL32(200, 150, 255, 255), IM_COL32(255, 255, 100, 255),
+  };
+
   frame_buffer<8192> replay_buf;
   std::optional<std::jthread> replay_thread;
   std::atomic<bool> replaying{false};
@@ -667,6 +687,7 @@ struct app_state {
     scrollback.clear();
     stats.reset();
     signals.clear();
+    overlay_layers.clear();
     has_first_frame = false;
   }
 
@@ -689,6 +710,7 @@ struct app_state {
     auto now = can_frame::clock::now();
     auto log_duration = std::chrono::microseconds(last_ts - first_ts);
     auto base_time = now - log_duration;
+    primary_base_time = base_time;
 
     imported_frames.clear();
     log_channels.clear();
@@ -775,6 +797,7 @@ struct app_state {
     auto log_duration = std::chrono::duration_cast<can_frame::clock::duration>(
         std::chrono::duration<double>(duration_sec));
     auto base_time = now - log_duration;
+    primary_base_time = base_time;
 
     first_frame_time = base_time;
     has_first_frame = true;
@@ -804,6 +827,86 @@ struct app_state {
     }
 
     return static_cast<float>(duration_sec);
+  }
+
+  float import_overlay_log(std::vector<std::pair<int64_t, can_frame>> frames,
+                           const std::string& filepath) {
+    if (frames.empty()) return 0.f;
+
+    int64_t first_ts = frames.front().first;
+    int64_t last_ts = frames.back().first;
+    double duration_sec = static_cast<double>(last_ts - first_ts) / 1e6;
+    if (duration_sec < 0.1) duration_sec = 1.0;
+
+    log_layer layer;
+    layer.name = std::filesystem::path(filepath).stem().string();
+    layer.path = filepath;
+    layer.duration_sec = static_cast<float>(duration_sec);
+    layer.tint = layer_tints[overlay_layers.size() %
+                             (sizeof(layer_tints) / sizeof(layer_tints[0]))];
+    layer.base_time = primary_base_time;
+    if (duration_sec > layer.signals.max_seconds())
+      layer.signals.set_max_seconds(duration_sec * 1.1);
+
+    for (auto& [ts_us, f] : frames) {
+      f.timestamp = primary_base_time + std::chrono::microseconds(ts_us - first_ts);
+      if (f.error) continue;
+      if (dbc_for_frame(f).has_message(f.id)) {
+        auto decoded = dbc_for_frame(f).decode(f);
+        for (const auto& sig : decoded)
+          layer.signals.push(signal_key{.msg_id = f.id, .name = sig.name},
+                             f.timestamp, sig.value, sig.unit, sig.minimum,
+                             sig.maximum);
+      }
+    }
+
+    auto dur = static_cast<float>(duration_sec);
+    overlay_layers.push_back(std::move(layer));
+    return dur;
+  }
+
+  float import_overlay_motec(const motec::ld_file& ld,
+                             const std::string& filepath) {
+    if (ld.channels.empty()) return 0.f;
+
+    double duration_sec = ld.duration_seconds();
+    if (duration_sec < 0.1) duration_sec = 1.0;
+
+    log_layer layer;
+    layer.name = std::filesystem::path(filepath).stem().string();
+    layer.path = filepath;
+    layer.duration_sec = static_cast<float>(duration_sec);
+    layer.tint = layer_tints[overlay_layers.size() %
+                             (sizeof(layer_tints) / sizeof(layer_tints[0]))];
+    layer.base_time = primary_base_time;
+    if (duration_sec > layer.signals.max_seconds())
+      layer.signals.set_max_seconds(duration_sec * 1.1);
+
+    constexpr uint32_t motec_msg_id = 0;
+    for (const auto& ch : ld.channels) {
+      if (ch.samples.empty() || ch.freq_hz == 0) continue;
+      signal_key key{.msg_id = motec_msg_id, .name = ch.name};
+      double ch_min = ch.samples[0], ch_max = ch.samples[0];
+      for (double v : ch.samples) {
+        ch_min = std::min(ch_min, v);
+        ch_max = std::max(ch_max, v);
+      }
+      double sample_period = 1.0 / static_cast<double>(ch.freq_hz);
+      for (std::size_t i = 0; i < ch.samples.size(); ++i) {
+        double t_sec = static_cast<double>(i) * sample_period;
+        auto t = primary_base_time + std::chrono::duration_cast<can_frame::clock::duration>(
+                                         std::chrono::duration<double>(t_sec));
+        layer.signals.push(key, t, ch.samples[i], ch.unit, ch_min, ch_max);
+      }
+    }
+
+    overlay_layers.push_back(std::move(layer));
+    return static_cast<float>(duration_sec);
+  }
+
+  void remove_overlay(int index) {
+    if (index >= 0 && index < static_cast<int>(overlay_layers.size()))
+      overlay_layers.erase(overlay_layers.begin() + index);
   }
 };
 

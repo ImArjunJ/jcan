@@ -33,7 +33,7 @@ static void glfw_error_callback(int error, const char* description) {
   std::fprintf(stderr, "GLFW Error %d: %s\n", error, description);
 }
 
-enum class dialog_id { none, open_dbc, open_replay, import_log, export_log };
+enum class dialog_id { none, open_dbc, open_replay, import_log, export_log, add_overlay };
 
 static jcan::app_state* g_drop_state = nullptr;
 
@@ -331,6 +331,45 @@ int main() {
               pending_dialog = dialog_id::import_log;
             }
           }
+          if (state.log_mode) {
+            if (ImGui::MenuItem("Add Overlay...", "Ctrl+Shift+I", false,
+                                !file_dialog.busy())) {
+              file_dialog.open_file({{"All Logs", "csv,asc,ld"},
+                                     {"MoTec i2", "ld"},
+                                     {"CSV / ASC", "csv,asc"}});
+              pending_dialog = dialog_id::add_overlay;
+            }
+            if (!state.overlay_layers.empty()) {
+              if (ImGui::BeginMenu("Remove Overlay")) {
+                int remove_idx = -1;
+                for (int i = 0; i < static_cast<int>(state.overlay_layers.size()); ++i) {
+                  if (ImGui::MenuItem(state.overlay_layers[i].name.c_str()))
+                    remove_idx = i;
+                }
+                ImGui::Separator();
+                if (ImGui::MenuItem("Remove All"))
+                  remove_idx = -2;
+                ImGui::EndMenu();
+                if (remove_idx == -2) {
+                  for (auto& ch : plotter.charts) {
+                    std::erase_if(ch.traces, [](const jcan::widgets::chart_trace& tr) {
+                      return tr.layer_idx >= 0;
+                    });
+                  }
+                  state.overlay_layers.clear();
+                } else if (remove_idx >= 0) {
+                  for (auto& ch : plotter.charts) {
+                    std::erase_if(ch.traces, [remove_idx](const jcan::widgets::chart_trace& tr) {
+                      return tr.layer_idx == remove_idx;
+                    });
+                    for (auto& tr : ch.traces)
+                      if (tr.layer_idx > remove_idx) --tr.layer_idx;
+                  }
+                  state.remove_overlay(remove_idx);
+                }
+              }
+            }
+          }
           if (!state.replaying.load()) {
             if (ImGui::MenuItem("Replay Log...", nullptr, false,
                                 !file_dialog.busy())) {
@@ -486,7 +525,12 @@ int main() {
       }
       if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_I) &&
           !file_dialog.busy()) {
-        if (state.connected) {
+        if (io.KeyShift && state.log_mode) {
+          file_dialog.open_file({{"All Logs", "csv,asc,ld"},
+                                 {"MoTec i2", "ld"},
+                                 {"CSV / ASC", "csv,asc"}});
+          pending_dialog = dialog_id::add_overlay;
+        } else if (state.connected) {
           pending_import_confirm = true;
         } else {
           file_dialog.open_file({{"All Logs", "csv,asc,ld"},
@@ -628,6 +672,47 @@ int main() {
                     state.status_text = std::format("Import failed: {} is empty", fname);
                   else
                     state.status_text = std::format("Import failed: no valid frames in {}", fname);
+                }
+              }
+            }
+            break;
+          case dialog_id::add_overlay:
+            if (*result) {
+              auto& path_str = **result;
+              auto ext = std::filesystem::path(path_str).extension().string();
+              for (auto& c : ext)
+                c = static_cast<char>(
+                    std::tolower(static_cast<unsigned char>(c)));
+
+              if (ext == ".ld") {
+                auto ld_result = jcan::motec::load_ld(path_str);
+                if (ld_result) {
+                  float dur = state.import_overlay_motec(*ld_result, path_str);
+                  state.status_text = std::format(
+                      "Overlay: {} ({:.1f}s, {} channels)",
+                      state.overlay_layers.back().name, dur,
+                      ld_result->channels.size());
+                } else {
+                  state.status_text =
+                      std::format("Overlay failed: {}", ld_result.error());
+                }
+              } else {
+                std::vector<std::pair<int64_t, jcan::can_frame>> frames;
+                if (ext == ".asc")
+                  frames = jcan::frame_logger::load_asc(path_str);
+                else
+                  frames = jcan::frame_logger::load_csv(path_str);
+                if (!frames.empty()) {
+                  float dur =
+                      state.import_overlay_log(std::move(frames), path_str);
+                  state.status_text = std::format(
+                      "Overlay: {} ({:.1f}s)",
+                      state.overlay_layers.back().name, dur);
+                } else {
+                  auto fname =
+                      std::filesystem::path(path_str).filename().string();
+                  state.status_text = std::format(
+                      "Overlay failed: no valid frames in {}", fname);
                 }
               }
             }

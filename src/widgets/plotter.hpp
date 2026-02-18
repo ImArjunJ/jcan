@@ -41,10 +41,10 @@ struct plotter_state {
 };
 
 inline bool is_signal_on_any_chart(const plotter_state& ps,
-                                   const signal_key& key) {
+                                   const signal_key& key, int layer_idx = -1) {
   for (const auto& chart : ps.charts)
     for (const auto& tr : chart.traces)
-      if (tr.key == key) return true;
+      if (tr.key == key && tr.layer_idx == layer_idx) return true;
   return false;
 }
 
@@ -84,17 +84,26 @@ inline void draw_plotter(app_state& state, plotter_state& ps) {
 
   float sidebar_width = 220.0f * state.ui_scale;
 
+  std::vector<layer_store_ref> layer_refs;
+  std::vector<overlay_store_info> visible_overlay_stores;
+  for (int i = 0; i < static_cast<int>(state.overlay_layers.size()); ++i) {
+    auto& layer = state.overlay_layers[i];
+    layer_refs.push_back({&layer.signals, &layer.time_offset_sec, layer.visible, i});
+    if (layer.visible)
+      visible_overlay_stores.push_back({i, &layer.signals, layer.name});
+  }
+
   if (ImGui::BeginChild("##sidebar", ImVec2(sidebar_width, 0), true)) {
     auto msg_name_fn = [&state](uint32_t id) -> std::string {
       auto name = state.any_message_name(id);
       if (name.empty() && id == 0) return "MoTec";
       return name;
     };
-    auto is_on = [&ps](const signal_key& key) -> bool {
-      return is_signal_on_any_chart(ps, key);
+    auto is_on = [&ps](const signal_key& key, int layer_idx) -> bool {
+      return is_signal_on_any_chart(ps, key, layer_idx);
     };
-    draw_channel_list(ps.channel_list, state.signals, msg_name_fn, is_on,
-                      state.colors.channel_on_chart);
+    draw_channel_list(ps.channel_list, state.signals, visible_overlay_stores,
+                      msg_name_fn, is_on, state.colors.channel_on_chart);
   }
   ImGui::EndChild();
 
@@ -169,18 +178,19 @@ inline void draw_plotter(app_state& state, plotter_state& ps) {
 
           if (ImGui::BeginDragDropTarget()) {
             if (const auto* payload =
-                    ImGui::AcceptDragDropPayload("SIGNAL_KEY")) {
-              auto* key = *static_cast<const signal_key* const*>(payload->Data);
+                    ImGui::AcceptDragDropPayload("SIGNAL_DRAG")) {
+              auto* drag = *static_cast<const signal_drag_payload* const*>(payload->Data);
               ps.active_chart = ci;
               bool already = false;
               for (const auto& tr : chart.traces)
-                if (tr.key == *key) {
+                if (tr.key == drag->key && tr.layer_idx == drag->layer_idx) {
                   already = true;
                   break;
                 }
               if (!already) {
                 chart_trace tr;
-                tr.key = *key;
+                tr.key = drag->key;
+                tr.layer_idx = drag->layer_idx;
                 tr.color = trace_color(global_trace_count(ps.charts));
                 chart.traces.push_back(std::move(tr));
               }
@@ -200,7 +210,7 @@ inline void draw_plotter(app_state& state, plotter_state& ps) {
           }
         }
 
-        draw_strip_chart(chart, state.signals, state.colors, chart_h);
+        draw_strip_chart(chart, state.signals, layer_refs, state.colors, chart_h);
         ps.sync_from_chart(chart);
         ImGui::PopID();
       }
