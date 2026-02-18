@@ -2,8 +2,8 @@
 
 #include <imgui.h>
 
-#include <algorithm>
 #include <format>
+#include <functional>
 #include <string>
 #include <vector>
 

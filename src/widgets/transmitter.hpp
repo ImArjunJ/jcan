@@ -13,7 +13,411 @@
 
 namespace jcan::widgets {
 
+struct source_editor_state {
+  bool open{false};
+  uint32_t job_id{0};
+  std::string signal_name;
+  int pending_tab{-1};
+  int drag_idx{-1};
+  bool dragging{false};
+  double frozen_t_max{10.0};
+  double frozen_v_min{0.0};
+  double frozen_v_max{1.0};
+};
+
+inline void draw_table_chart(signal_source& src, float width, float height,
+                             source_editor_state& ed) {
+  auto& pts = src.table.points;
+
+  double t_min_d = 0.0, t_max_d = 10.0;
+  double v_min_d = 0.0, v_max_d = 1.0;
+  if (ed.dragging) {
+    t_max_d = ed.frozen_t_max;
+    v_min_d = ed.frozen_v_min;
+    v_max_d = ed.frozen_v_max;
+  } else {
+    if (!pts.empty()) {
+      t_max_d = std::max(pts.back().time_sec * 1.15, 1.0);
+      v_min_d = pts[0].value;
+      v_max_d = pts[0].value;
+      for (const auto& p : pts) {
+        v_min_d = std::min(v_min_d, p.value);
+        v_max_d = std::max(v_max_d, p.value);
+      }
+      double margin = (v_max_d - v_min_d) * 0.12;
+      if (margin < 0.5)
+        margin = std::max((std::abs(v_max_d) + std::abs(v_min_d)) * 0.05, 0.5);
+      v_min_d -= margin;
+      v_max_d += margin;
+    }
+  }
+
+  float left_margin = 50.f;
+  float bottom_margin = 20.f;
+  float top_pad = 4.f;
+  float right_pad = 8.f;
+
+  ImVec2 canvas_pos = ImGui::GetCursorScreenPos();
+  ImVec2 canvas_sz(width, height);
+  ImGui::InvisibleButton(
+      "##chart", canvas_sz,
+      ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
+  bool hovered = ImGui::IsItemHovered();
+
+  auto* dl = ImGui::GetWindowDrawList();
+  ImU32 col_bg = IM_COL32(25, 25, 35, 255);
+  ImU32 col_grid = IM_COL32(55, 55, 75, 255);
+  ImU32 col_axis = IM_COL32(120, 120, 140, 255);
+  ImU32 col_line = IM_COL32(80, 180, 255, 255);
+  ImU32 col_point = IM_COL32(255, 200, 60, 255);
+  ImU32 col_point_hl = IM_COL32(255, 255, 130, 255);
+  ImU32 col_text = IM_COL32(180, 180, 200, 255);
+
+  float px0 = canvas_pos.x + left_margin;
+  float py0 = canvas_pos.y + top_pad;
+  float px1 = canvas_pos.x + canvas_sz.x - right_pad;
+  float py1 = canvas_pos.y + canvas_sz.y - bottom_margin;
+  float pw = px1 - px0;
+  float ph = py1 - py0;
+
+  dl->AddRectFilled(canvas_pos,
+                    {canvas_pos.x + canvas_sz.x, canvas_pos.y + canvas_sz.y},
+                    col_bg);
+
+  auto to_screen = [&](double t, double v) -> ImVec2 {
+    float x =
+        px0 + static_cast<float>((t - t_min_d) / (t_max_d - t_min_d) * pw);
+    float y =
+        py1 - static_cast<float>((v - v_min_d) / (v_max_d - v_min_d) * ph);
+    return {x, y};
+  };
+  auto from_screen = [&](ImVec2 sp) -> std::pair<double, double> {
+    double t = t_min_d + (sp.x - px0) / pw * (t_max_d - t_min_d);
+    double v = v_min_d + (py1 - sp.y) / ph * (v_max_d - v_min_d);
+    return {std::max(t, 0.0), v};
+  };
+
+  int n_grid_x = std::clamp(static_cast<int>(pw / 80.f), 3, 10);
+  int n_grid_y = std::clamp(static_cast<int>(ph / 40.f), 3, 8);
+
+  for (int i = 0; i <= n_grid_x; ++i) {
+    float frac = static_cast<float>(i) / static_cast<float>(n_grid_x);
+    float x = px0 + frac * pw;
+    dl->AddLine({x, py0}, {x, py1}, col_grid);
+    double t_val = t_min_d + frac * (t_max_d - t_min_d);
+    auto txt = std::format("{:.1f}s", t_val);
+    dl->AddText({x - 12.f, py1 + 3.f}, col_text, txt.c_str());
+  }
+  for (int i = 0; i <= n_grid_y; ++i) {
+    float frac = static_cast<float>(i) / static_cast<float>(n_grid_y);
+    float y = py1 - frac * ph;
+    dl->AddLine({px0, y}, {px1, y}, col_grid);
+    double v_val = v_min_d + frac * (v_max_d - v_min_d);
+    auto txt = std::format("{:.1f}", v_val);
+    auto tsz = ImGui::CalcTextSize(txt.c_str());
+    dl->AddText({px0 - tsz.x - 4.f, y - tsz.y * 0.5f}, col_text, txt.c_str());
+  }
+
+  dl->AddLine({px0, py0}, {px0, py1}, col_axis, 1.5f);
+  dl->AddLine({px0, py1}, {px1, py1}, col_axis, 1.5f);
+
+  if (pts.size() >= 2) {
+    int steps = std::max(static_cast<int>(pw), 100);
+    ImVec2 prev = to_screen(pts.front().time_sec, pts.front().value);
+    for (int i = 1; i <= steps; ++i) {
+      double t = t_min_d + (t_max_d - t_min_d) * static_cast<double>(i) /
+                               static_cast<double>(steps);
+      double ev_t = t;
+      if (src.repeat && !pts.empty() && pts.back().time_sec > 0)
+        ev_t = std::fmod(t, pts.back().time_sec);
+      double v = src.table.evaluate(ev_t);
+      ImVec2 cur = to_screen(t, v);
+      dl->AddLine(prev, cur, col_line, 2.f);
+      prev = cur;
+    }
+  }
+
+  ImVec2 mouse = ImGui::GetMousePos();
+  int hover_idx = -1;
+  float point_r = 7.f;
+  for (int i = 0; i < static_cast<int>(pts.size()); ++i) {
+    ImVec2 sp = to_screen(pts[i].time_sec, pts[i].value);
+    float dx = mouse.x - sp.x, dy = mouse.y - sp.y;
+    if (dx * dx + dy * dy < point_r * point_r * 4) {
+      hover_idx = i;
+      break;
+    }
+  }
+
+  if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+    if (ed.drag_idx >= 0 && ed.drag_idx < static_cast<int>(pts.size())) {
+      auto [t, v] = from_screen(mouse);
+      pts[ed.drag_idx].time_sec = t;
+      pts[ed.drag_idx].value = v;
+    }
+  }
+  if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && hovered) {
+    if (hover_idx >= 0) {
+      ed.drag_idx = hover_idx;
+      ed.dragging = true;
+      ed.frozen_t_max = t_max_d;
+      ed.frozen_v_min = v_min_d;
+      ed.frozen_v_max = v_max_d;
+    } else if (mouse.x >= px0 && mouse.x <= px1 && mouse.y >= py0 &&
+               mouse.y <= py1) {
+      auto [t, v] = from_screen(mouse);
+      pts.push_back({t, v});
+      std::sort(pts.begin(), pts.end(),
+                [](const table_point& a, const table_point& b) {
+                  return a.time_sec < b.time_sec;
+                });
+      ed.drag_idx = -1;
+    }
+  }
+  if (ImGui::IsMouseReleased(ImGuiMouseButton_Left) && ed.drag_idx >= 0) {
+    std::sort(pts.begin(), pts.end(),
+              [](const table_point& a, const table_point& b) {
+                return a.time_sec < b.time_sec;
+              });
+    ed.drag_idx = -1;
+    ed.dragging = false;
+  }
+  if (ImGui::IsMouseClicked(ImGuiMouseButton_Right) && hovered &&
+      hover_idx >= 0) {
+    pts.erase(pts.begin() + hover_idx);
+    ed.drag_idx = -1;
+  }
+
+  for (int i = 0; i < static_cast<int>(pts.size()); ++i) {
+    ImVec2 sp = to_screen(pts[i].time_sec, pts[i].value);
+    ImU32 col = (i == hover_idx || i == ed.drag_idx) ? col_point_hl : col_point;
+    if (pts[i].hold) {
+      float r = point_r * 0.85f;
+      dl->AddRectFilled({sp.x - r, sp.y - r}, {sp.x + r, sp.y + r}, col);
+      dl->AddRect({sp.x - r, sp.y - r}, {sp.x + r, sp.y + r},
+                  IM_COL32(0, 0, 0, 200), 0, 0, 1.5f);
+    } else {
+      dl->AddCircleFilled(sp, point_r, col);
+      dl->AddCircle(sp, point_r, IM_COL32(0, 0, 0, 200), 0, 1.5f);
+    }
+  }
+
+  if (hovered && hover_idx >= 0) {
+    ImGui::SetTooltip("t=%.2fs  val=%.3f\nDrag to move, right-click to delete",
+                      pts[hover_idx].time_sec, pts[hover_idx].value);
+  } else if (hovered && mouse.x >= px0 && mouse.y >= py0 && mouse.y <= py1) {
+    auto [t, v] = from_screen(mouse);
+    ImGui::SetTooltip("Click to add point\nt=%.2fs  val=%.1f", t, v);
+  }
+}
+
+inline void draw_source_editor(app_state& state, source_editor_state& ed) {
+  if (!ed.open) return;
+
+  signal_source* src_ptr = nullptr;
+  std::string window_title;
+  state.tx_sched.with_jobs([&](std::vector<tx_job>& jobs) {
+    for (auto& job : jobs) {
+      if (job.instance_id == ed.job_id) {
+        auto it = job.signal_sources.find(ed.signal_name);
+        if (it != job.signal_sources.end()) {
+          src_ptr = &it->second;
+          window_title = std::format("Source: {} [0x{:03X} {}]###srceditor",
+                                     ed.signal_name, job.msg_id, job.msg_name);
+        }
+        break;
+      }
+    }
+  });
+
+  if (!src_ptr) {
+    ed.open = false;
+    return;
+  }
+  auto& src = *src_ptr;
+
+  ImGui::SetNextWindowSize(ImVec2(500, 400), ImGuiCond_FirstUseEver);
+  if (!ImGui::Begin(window_title.c_str(), &ed.open)) {
+    ImGui::End();
+    return;
+  }
+
+  int force = ed.pending_tab;
+  auto tab_flag = [&](source_mode m) -> ImGuiTabItemFlags {
+    return (force == static_cast<int>(m)) ? ImGuiTabItemFlags_SetSelected : 0;
+  };
+  if (ImGui::BeginTabBar("##modes")) {
+    if (ImGui::BeginTabItem("Waveform", nullptr,
+                            tab_flag(source_mode::waveform))) {
+      src.mode = source_mode::waveform;
+      ImGui::EndTabItem();
+    }
+    if (ImGui::BeginTabItem("Table", nullptr, tab_flag(source_mode::table))) {
+      src.mode = source_mode::table;
+      ImGui::EndTabItem();
+    }
+    if (ImGui::BeginTabItem("Expression", nullptr,
+                            tab_flag(source_mode::expression))) {
+      src.mode = source_mode::expression;
+      ImGui::EndTabItem();
+    }
+    if (ImGui::BeginTabItem("Constant", nullptr,
+                            tab_flag(source_mode::constant))) {
+      src.mode = source_mode::constant;
+      ImGui::EndTabItem();
+    }
+    ImGui::EndTabBar();
+  }
+  ed.pending_tab = -1;
+
+  ImGui::Separator();
+
+  if (src.mode == source_mode::waveform) {
+    static const char* wave_names[] = {"Sine", "Ramp", "Square", "Triangle"};
+    int wt = static_cast<int>(src.waveform.type);
+    ImGui::SetNextItemWidth(150.f);
+    if (ImGui::Combo("Type", &wt, wave_names, 4))
+      src.waveform.type = static_cast<waveform_type>(wt);
+    ImGui::SetNextItemWidth(150.f);
+    ImGui::InputDouble("Min", &src.waveform.min_val, 0, 0, "%.3f");
+    ImGui::SetNextItemWidth(150.f);
+    ImGui::InputDouble("Max", &src.waveform.max_val, 0, 0, "%.3f");
+    ImGui::SetNextItemWidth(150.f);
+    ImGui::InputDouble("Period (s)", &src.waveform.period_sec, 0, 0, "%.3f");
+    src.waveform.period_sec = std::max(0.001, src.waveform.period_sec);
+    ImGui::Checkbox("Repeat", &src.repeat);
+
+    ImGui::Spacing();
+    float preview[256];
+    src.preview(preview, 256, src.preview_duration());
+    ImGui::PlotLines("##preview", preview, 256, 0, nullptr,
+                     static_cast<float>(src.waveform.min_val),
+                     static_cast<float>(src.waveform.max_val),
+                     ImVec2(ImGui::GetContentRegionAvail().x,
+                            ImGui::GetContentRegionAvail().y));
+  }
+
+  else if (src.mode == source_mode::table) {
+    auto& pts = src.table.points;
+
+    ImGui::Checkbox("Repeat", &src.repeat);
+
+    float avail_w = ImGui::GetContentRegionAvail().x;
+    float avail_h = ImGui::GetContentRegionAvail().y;
+    float list_w = std::min(230.f, avail_w * 0.4f);
+
+    if (ImGui::BeginChild("##ptlist", ImVec2(list_w, avail_h), true)) {
+      ImGui::TextDisabled("Time    Value");
+      ImGui::Separator();
+
+      int del_idx = -1;
+      for (int pi = 0; pi < static_cast<int>(pts.size()); ++pi) {
+        ImGui::PushID(pi);
+        ImGui::SetNextItemWidth(50.f);
+        ImGui::InputDouble("##t", &pts[pi].time_sec, 0, 0, "%.2f");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(55.f);
+        ImGui::InputDouble("##v", &pts[pi].value, 0, 0, "%.2f");
+        ImGui::SameLine();
+        bool h = pts[pi].hold;
+        if (ImGui::SmallButton(h ? "H" : "~")) pts[pi].hold = !h;
+        if (ImGui::IsItemHovered())
+          ImGui::SetTooltip(h ? "Hold (step) - click for interpolate"
+                              : "Interpolate (ramp) - click for hold");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("X")) del_idx = pi;
+        ImGui::PopID();
+      }
+      if (del_idx >= 0) pts.erase(pts.begin() + del_idx);
+
+      ImGui::Spacing();
+      if (ImGui::Button("+ Add Point", ImVec2(-1, 0))) {
+        double new_t = pts.empty() ? 0.0 : pts.back().time_sec + 1.0;
+        pts.push_back({new_t, 0.0, true});
+      }
+
+      if (!ImGui::IsAnyItemActive()) {
+        std::sort(pts.begin(), pts.end(),
+                  [](const table_point& a, const table_point& b) {
+                    return a.time_sec < b.time_sec;
+                  });
+      }
+    }
+    ImGui::EndChild();
+
+    ImGui::SameLine();
+
+    if (ImGui::BeginChild("##ptchart", ImVec2(0, avail_h), false)) {
+      float cw = ImGui::GetContentRegionAvail().x;
+      float ch = ImGui::GetContentRegionAvail().y;
+      if (cw > 60.f && ch > 40.f) draw_table_chart(src, cw, ch, ed);
+    }
+    ImGui::EndChild();
+  }
+
+  else if (src.mode == source_mode::expression) {
+    char buf[256]{};
+    std::strncpy(buf, src.expression.text.c_str(), sizeof(buf) - 1);
+    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+    if (ImGui::InputText("##expr", buf, sizeof(buf),
+                         ImGuiInputTextFlags_EnterReturnsTrue)) {
+      src.expression.text = buf;
+      src.expression.compile();
+    }
+    if (ImGui::IsItemDeactivatedAfterEdit()) {
+      src.expression.text = buf;
+      src.expression.compile();
+    }
+
+    ImGui::Spacing();
+    ImGui::TextDisabled("Variables: t (elapsed seconds)");
+    ImGui::TextDisabled("Constants: pi, e");
+    ImGui::TextDisabled("Functions: sin cos abs sqrt min max pow clamp");
+    ImGui::Spacing();
+    ImGui::TextDisabled("Examples:");
+    ImGui::BulletText("sin(t * 2 * pi) * 100 + 200");
+    ImGui::BulletText("t * 50");
+    ImGui::BulletText("clamp(t * 10, 0, 255)");
+    ImGui::BulletText("min(t^2, 1000)");
+    ImGui::BulletText("150 + 50 * sin(t) * cos(t * 0.3)");
+
+    if (!src.expression.error.empty()) {
+      ImGui::Spacing();
+      ImGui::TextColored(ImVec4(1.f, 0.3f, 0.3f, 1.f), "%s",
+                         src.expression.error.c_str());
+    } else if (src.expression.ast_) {
+      ImGui::Spacing();
+      float preview[256];
+      src.preview(preview, 256, src.preview_duration());
+      float vmin = preview[0], vmax = preview[0];
+      for (int i = 1; i < 256; ++i) {
+        vmin = std::min(vmin, preview[i]);
+        vmax = std::max(vmax, preview[i]);
+      }
+      if (vmin == vmax) {
+        vmin -= 1.f;
+        vmax += 1.f;
+      }
+      ImGui::PlotLines("##preview", preview, 256, 0, nullptr, vmin, vmax,
+                       ImVec2(ImGui::GetContentRegionAvail().x,
+                              ImGui::GetContentRegionAvail().y));
+    }
+  }
+
+  else if (src.mode == source_mode::constant) {
+    ImGui::TextWrapped(
+        "Using the constant value from the slider in the Transmitter panel.");
+    if (ImGui::Button("Close")) ed.open = false;
+  }
+
+  ImGui::End();
+}
+
 inline void draw_transmitter(app_state& state) {
+  static source_editor_state src_editor;
+
+  draw_source_editor(state, src_editor);
+
   ImGui::SetNextWindowSize(ImVec2(520, 500), ImGuiCond_FirstUseEver);
   if (!ImGui::Begin("Transmitter")) {
     ImGui::End();
@@ -96,7 +500,16 @@ inline void draw_transmitter(app_state& state) {
       job.frame.dlc = eng.message_dlc(mid);
       std::memset(job.frame.data.data(), 0, 64);
       auto sigs = eng.signal_infos(mid);
-      for (const auto& si : sigs) job.signal_values[si.name] = 0.0;
+      for (const auto& si : sigs) {
+        signal_source src;
+        src.constant_value = 0.0;
+        src.waveform.min_val = si.minimum;
+        src.waveform.max_val = si.maximum;
+        if (src.waveform.min_val == src.waveform.max_val) {
+          src.waveform.max_val = 1.0;
+        }
+        job.signal_sources[si.name] = std::move(src);
+      }
       state.tx_sched.upsert(std::move(job));
     }
     ImGui::SameLine();
@@ -153,14 +566,19 @@ inline void draw_transmitter(app_state& state) {
 
       if (open) {
         ImGui::Checkbox("Enable TX", &job.enabled);
+        if (job.enabled && !job.was_enabled)
+          job.start_time = tx_job::clock::now();
+        job.was_enabled = job.enabled;
         ImGui::SameLine();
         ImGui::SetNextItemWidth(100);
         ImGui::DragFloat("Period (ms)", &job.period_ms, 1.0f, 1.0f, 10000.f,
                          "%.0f");
         ImGui::SameLine();
         if (ImGui::Button("Send Once")) {
-          if (!job.is_raw && state.any_dbc_loaded())
-            job.frame = state.dbc_for_id(job.msg_id).encode(job.msg_id, job.signal_values);
+          if (!job.is_raw && state.any_dbc_loaded()) {
+            auto vals = job.evaluate_signals();
+            job.frame = state.dbc_for_id(job.msg_id).encode(job.msg_id, vals);
+          }
           if (auto* a = state.tx_adapter()) (void)adapter_send(*a, job.frame);
         }
         ImGui::SameLine();
@@ -231,7 +649,7 @@ inline void draw_transmitter(app_state& state) {
             ImGui::TableSetupColumn("ctrl", ImGuiTableColumnFlags_WidthStretch);
 
             for (const auto& si : sigs) {
-              auto& val = job.signal_values[si.name];
+              auto& src = job.signal_sources[si.name];
 
               float fmin = static_cast<float>(si.minimum);
               float fmax = static_cast<float>(si.maximum);
@@ -262,49 +680,109 @@ inline void draw_transmitter(app_state& state) {
               ImGui::TableNextRow();
               ImGui::TableNextColumn();
               ImGui::AlignTextToFramePadding();
-              ImGui::TextUnformatted(label.c_str());
+
+              bool has_source = src.mode != source_mode::constant;
+              if (has_source)
+                ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "%s",
+                                   label.c_str());
+              else
+                ImGui::TextUnformatted(label.c_str());
 
               ImGui::TableNextColumn();
-              auto slider_id = std::format("##sig_{}", si.name);
 
-              if (is_bool) {
-                bool bval = (val != 0.0);
-                if (ImGui::Checkbox(slider_id.c_str(), &bval))
-                  val = bval ? 1.0 : 0.0;
-              } else if (is_integer) {
-                int ival = static_cast<int>(val);
-                int imin = static_cast<int>(fmin);
-                int imax = static_cast<int>(fmax);
-                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x -
-                                        100.f);
-                if (ImGui::SliderInt(slider_id.c_str(), &ival, imin, imax))
-                  val = static_cast<double>(ival);
+              if (src.mode == source_mode::constant) {
+                auto& val = src.constant_value;
+                auto slider_id = std::format("##sig_{}", si.name);
+
+                if (is_bool) {
+                  bool bval = (val != 0.0);
+                  if (ImGui::Checkbox(slider_id.c_str(), &bval))
+                    val = bval ? 1.0 : 0.0;
+                } else if (is_integer) {
+                  int ival = static_cast<int>(val);
+                  int imin = static_cast<int>(fmin);
+                  int imax = static_cast<int>(fmax);
+                  ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x -
+                                          100.f);
+                  if (ImGui::SliderInt(slider_id.c_str(), &ival, imin, imax))
+                    val = static_cast<double>(ival);
+                } else {
+                  float fval = static_cast<float>(val);
+                  ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x -
+                                          100.f);
+                  if (ImGui::SliderFloat(slider_id.c_str(), &fval, fmin, fmax,
+                                         "%.3f"))
+                    val = static_cast<double>(fval);
+                }
+
+                if (!is_bool) {
+                  ImGui::SameLine();
+                  auto raw_factor = (si.factor != 0.0) ? si.factor : 1.0;
+                  auto raw_val =
+                      static_cast<int64_t>((val - si.offset) / raw_factor);
+                  auto raw_id = std::format("##raw_{}", si.name);
+                  ImGui::SetNextItemWidth(90.f);
+                  if (ImGui::InputScalar(raw_id.c_str(), ImGuiDataType_S64,
+                                         &raw_val))
+                    val = static_cast<double>(raw_val) * si.factor + si.offset;
+                }
               } else {
-                float fval = static_cast<float>(val);
-                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x -
-                                        100.f);
-                if (ImGui::SliderFloat(slider_id.c_str(), &fval, fmin, fmax,
-                                       "%.3f"))
-                  val = static_cast<double>(fval);
+                double cur = src.evaluate(job.elapsed_sec());
+                float cur_f = static_cast<float>(cur);
+                float fraction =
+                    (fmax != fmin)
+                        ? std::clamp((cur_f - fmin) / (fmax - fmin), 0.f, 1.f)
+                        : 0.5f;
+                auto overlay = std::format("{:.3f}", cur);
+                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+                ImGui::ProgressBar(fraction, ImVec2(0, 0), overlay.c_str());
               }
 
-              if (!is_bool) {
-                ImGui::SameLine();
-                auto raw_factor = (si.factor != 0.0) ? si.factor : 1.0;
-                auto raw_val =
-                    static_cast<int64_t>((val - si.offset) / raw_factor);
-                auto raw_id = std::format("##raw_{}", si.name);
-                ImGui::SetNextItemWidth(90.f);
-                if (ImGui::InputScalar(raw_id.c_str(), ImGuiDataType_S64,
-                                       &raw_val))
-                  val = static_cast<double>(raw_val) * si.factor + si.offset;
+              if (ImGui::BeginPopupContextItem(
+                      std::format("##ctx_{}", si.name).c_str())) {
+                ImGui::TextDisabled("%s", label.c_str());
+                ImGui::Separator();
+
+                auto open_editor = [&](source_mode m) {
+                  src.mode = m;
+                  src_editor.open = true;
+                  src_editor.pending_tab = static_cast<int>(src.mode);
+                  src_editor.job_id = job.instance_id;
+                  src_editor.signal_name = si.name;
+                };
+
+                if (ImGui::MenuItem("Constant", nullptr,
+                                    src.mode == source_mode::constant))
+                  src.mode = source_mode::constant;
+                if (ImGui::MenuItem("Waveform...", nullptr,
+                                    src.mode == source_mode::waveform))
+                  open_editor(source_mode::waveform);
+                if (ImGui::MenuItem("Table...", nullptr,
+                                    src.mode == source_mode::table))
+                  open_editor(source_mode::table);
+                if (ImGui::MenuItem("Expression...", nullptr,
+                                    src.mode == source_mode::expression))
+                  open_editor(source_mode::expression);
+
+                if (src.mode != source_mode::constant) {
+                  ImGui::Separator();
+                  if (ImGui::MenuItem("Edit Source...")) {
+                    src_editor.open = true;
+                    src_editor.pending_tab = static_cast<int>(src.mode);
+                    src_editor.job_id = job.instance_id;
+                    src_editor.signal_name = si.name;
+                  }
+                }
+
+                ImGui::EndPopup();
               }
             }
 
             ImGui::EndTable();
           }
 
-          job.frame = eng.encode(job.msg_id, job.signal_values);
+          auto vals = job.evaluate_signals();
+          job.frame = eng.encode(job.msg_id, vals);
         }
 
         ImGui::TextDisabled("  Frame: ");

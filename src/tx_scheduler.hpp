@@ -12,6 +12,7 @@
 
 #include "frame_buffer.hpp"
 #include "hardware.hpp"
+#include "signal_source.hpp"
 #include "types.hpp"
 
 namespace jcan {
@@ -25,10 +26,24 @@ struct tx_job {
   bool enabled{false};
   bool is_raw{false};
 
-  std::unordered_map<std::string, double> signal_values;
+  std::unordered_map<std::string, signal_source> signal_sources;
 
   using clock = std::chrono::steady_clock;
   clock::time_point last_sent{};
+  clock::time_point start_time{};
+  bool was_enabled{false};
+
+  [[nodiscard]] double elapsed_sec() const {
+    return std::chrono::duration<double>(clock::now() - start_time).count();
+  }
+
+  [[nodiscard]] std::unordered_map<std::string, double> evaluate_signals()
+      const {
+    std::unordered_map<std::string, double> vals;
+    double t = elapsed_sec();
+    for (const auto& [name, src] : signal_sources) vals[name] = src.evaluate(t);
+    return vals;
+  }
 
   static uint32_t next_id() {
     static uint32_t counter = 0;

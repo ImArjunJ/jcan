@@ -435,8 +435,9 @@ struct app_state {
     if (auto r = adapter_open(slot->hw, desc.port, bitrate); !r) {
       if (r.error() == error_code::permission_denied) {
 #ifdef _WIN32
-        status_text =
-            std::format("Access denied: {} - device may be held by a vendor driver", desc.port);
+        status_text = std::format(
+            "Access denied: {} - device may be held by a vendor driver",
+            desc.port);
         return;
 #else
         status_text =
@@ -793,8 +794,9 @@ struct app_state {
       double sample_period = 1.0 / static_cast<double>(ch.freq_hz);
       for (std::size_t i = 0; i < ch.samples.size(); ++i) {
         double t_sec = static_cast<double>(i) * sample_period;
-        auto t = base_time + std::chrono::duration_cast<can_frame::clock::duration>(
-                                 std::chrono::duration<double>(t_sec));
+        auto t =
+            base_time + std::chrono::duration_cast<can_frame::clock::duration>(
+                            std::chrono::duration<double>(t_sec));
         signals.push(key, t, ch.samples[i], ch.unit, ch_min, ch_max);
       }
     }
