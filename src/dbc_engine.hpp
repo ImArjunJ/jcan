@@ -61,23 +61,29 @@ class dbc_engine {
     return out;
   }
 
-  bool load(const std::filesystem::path& path) {
+  std::string load(const std::filesystem::path& path) {
     for (const auto& n : networks_) {
-      if (n.path == path.string()) return true;
+      if (n.path == path.string()) return {};
     }
     std::ifstream ifs(path);
-    if (!ifs.is_open()) return false;
+    if (!ifs.is_open()) return "cannot open file: " + path.string();
 
-    auto net = dbcppp::INetwork::LoadDBCFromIs(ifs);
-    if (!net) return false;
+    try {
+      auto net = dbcppp::INetwork::LoadDBCFromIs(ifs);
+      if (!net) return "failed to parse DBC: " + path.filename().string();
 
-    loaded_network ln;
-    ln.net = std::move(net);
-    ln.filename = path.filename().string();
-    ln.path = path.string();
-    networks_.push_back(std::move(ln));
-    rebuild_index();
-    return true;
+      loaded_network ln;
+      ln.net = std::move(net);
+      ln.filename = path.filename().string();
+      ln.path = path.string();
+      networks_.push_back(std::move(ln));
+      rebuild_index();
+      return {};
+    } catch (const std::exception& e) {
+      return std::string("DBC parse error: ") + e.what();
+    } catch (...) {
+      return "DBC parse error (unknown)";
+    }
   }
 
   void unload() {

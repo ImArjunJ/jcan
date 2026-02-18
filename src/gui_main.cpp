@@ -47,12 +47,13 @@ static void glfw_drop_callback([[maybe_unused]] GLFWwindow* window, int count,
       std::string ext = path.substr(path.size() - 4);
       for (auto& c : ext) c = static_cast<char>(std::tolower(c));
       if (ext == ".dbc") {
-        if (g_drop_state->dbc.load(path)) {
+        auto err = g_drop_state->dbc.load(path);
+        if (err.empty()) {
           g_drop_state->redecode_log();
           g_drop_state->status_text = std::format(
               "DBC: {} msgs", g_drop_state->dbc.message_ids().size());
         } else {
-          g_drop_state->status_text = "DBC load failed!";
+          g_drop_state->status_text = err;
         }
         return;
       }
@@ -524,23 +525,25 @@ int main() {
           case dialog_id::open_dbc:
             if (*result) {
               if (pending_dbc_channel == 0xff) {
-                if (state.dbc.load(**result)) {
+                auto err = state.dbc.load(**result);
+                if (err.empty()) {
                   state.redecode_log();
                   state.status_text = std::format(
                       "DBC: {} msgs", state.dbc.message_ids().size());
                 } else {
-                  state.status_text = "DBC load failed!";
+                  state.status_text = err;
                 }
               } else {
                 auto& eng = state.log_dbc[pending_dbc_channel];
-                if (eng.load(**result)) {
+                auto err = eng.load(**result);
+                if (err.empty()) {
                   state.redecode_log();
                   state.status_text =
                       std::format("Ch {} DBC: {} msgs",
                                   static_cast<int>(pending_dbc_channel),
                                   eng.message_ids().size());
                 } else {
-                  state.status_text = "DBC load failed!";
+                  state.status_text = err;
                 }
               }
             }
@@ -620,7 +623,11 @@ int main() {
                     c.live_follow = false;
                   }
                 } else {
-                  state.status_text = "Import failed (no frames)";
+                  auto fname = std::filesystem::path(path_str).filename().string();
+                  if (std::filesystem::file_size(path_str) == 0)
+                    state.status_text = std::format("Import failed: {} is empty", fname);
+                  else
+                    state.status_text = std::format("Import failed: no valid frames in {}", fname);
                 }
               }
             }

@@ -75,9 +75,9 @@ inline void draw_plotter(app_state& state, plotter_state& ps) {
   }
 
   if (!state.any_dbc_loaded() && state.signals.channel_count() == 0) {
-    ImGui::TextDisabled(
-        "No DBC loaded -- use File > Load DBC, Connection window, or drag & "
-        "drop");
+    ImGui::TextDisabled("Load a DBC file to decode and plot signals");
+    ImGui::TextDisabled("File > Load DBC  |  Ctrl+O  |  Drag & drop .dbc file");
+    ImGui::TextDisabled("Or import a MoTec .ld log via File > Import Log");
     ImGui::End();
     return;
   }
@@ -107,10 +107,11 @@ inline void draw_plotter(app_state& state, plotter_state& ps) {
       ps.charts.emplace_back();
     }
     ImGui::SameLine();
-    ImGui::TextDisabled("(%zu chart%s, %zu channels, %zu samples)",
+    ImGui::TextDisabled("(%zu chart%s, %zu channels, %zu samples)  Scroll=Zoom  Drag=Pan  W=Fit%s",
                         ps.charts.size(), ps.charts.size() != 1 ? "s" : "",
                         state.signals.channel_count(),
-                        state.signals.total_samples());
+                        state.signals.total_samples(),
+                        state.log_mode ? "" : "  Space=Pause");
 
     if (!ps.charts.empty() && !state.log_mode) {
       ImGui::SameLine();

@@ -633,6 +633,7 @@ inline void draw_transmitter(app_state& state) {
         } else {
           const auto& eng = state.dbc_for_id(job.msg_id);
           auto sigs = eng.signal_infos(job.msg_id);
+          ImGui::TextDisabled("Right-click signals for waveform/table/expression sources");
 
           float label_w = 0.f;
           for (const auto& si : sigs) {

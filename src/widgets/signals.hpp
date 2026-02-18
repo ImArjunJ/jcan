@@ -19,9 +19,8 @@ inline void draw_signals(app_state& state) {
   }
 
   if (!state.any_dbc_loaded()) {
-    ImGui::TextDisabled(
-        "No DBC loaded -- use File > Load DBC, Connection window, or drag & "
-        "drop");
+    ImGui::TextDisabled("Load a DBC file to decode signals");
+    ImGui::TextDisabled("File > Load DBC  |  Ctrl+O  |  Drag & drop .dbc file");
     ImGui::End();
     return;
   }

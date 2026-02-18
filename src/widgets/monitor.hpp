@@ -116,6 +116,10 @@ inline void draw_monitor_live(app_state& state) {
                              state.filter_text, sizeof(state.filter_text));
     ImGui::SameLine();
     ImGui::Text("Rows: %zu", state.monitor_rows.size());
+    if (state.monitor_rows.empty() && !state.connected && !state.log_mode) {
+      ImGui::SameLine();
+      ImGui::TextDisabled("  Connect an adapter to see frames");
+    }
 
     ImGui::Separator();
 

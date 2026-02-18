@@ -91,6 +91,14 @@ inline bool draw_strip_chart(strip_chart_state& chart,
   draw->AddRectFilled(canvas_pos, canvas_end, colors.chart_bg);
   draw->AddRect(canvas_pos, canvas_end, colors.chart_border);
 
+  if (chart.traces.empty()) {
+    const char* hint = "Drag a signal from the sidebar to add it here";
+    auto hint_size = ImGui::CalcTextSize(hint);
+    ImVec2 hint_pos(canvas_pos.x + (canvas_size.x - hint_size.x) * 0.5f,
+                    canvas_pos.y + (canvas_size.y - hint_size.y) * 0.5f);
+    draw->AddText(hint_pos, colors.chart_grid_text, hint);
+  }
+
   ImGui::InvisibleButton("##chart_area", canvas_size);
   bool hovered = ImGui::IsItemHovered();
   bool active = ImGui::IsItemActive();

@@ -60,6 +60,10 @@ inline void draw_channel_list(
   }
 
   ImGui::Text("%zu / %zu channels", visible.size(), channels.size());
+  if (visible.empty() && channels.empty())
+    ImGui::TextDisabled("Load a DBC file to see signals");
+  else if (!visible.empty())
+    ImGui::TextDisabled("Drag signals to a chart to plot");
   ImGui::Separator();
 
   if (ImGui::BeginChild("##ch_list", ImVec2(0, 0), ImGuiChildFlags_None,

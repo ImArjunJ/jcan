@@ -60,7 +60,8 @@ inline void draw_connection_panel(app_state& state) {
         nfdchar_t* out_path = nullptr;
         nfdfilteritem_t filters[] = {{"DBC Files", "dbc"}};
         if (NFD_OpenDialog(&out_path, filters, 1, nullptr) == NFD_OKAY) {
-          slot->slot_dbc.load(out_path);
+          auto err = slot->slot_dbc.load(out_path);
+          if (!err.empty()) state.status_text = err;
           NFD_FreePath(out_path);
         }
       }
@@ -100,7 +101,8 @@ inline void draw_connection_panel(app_state& state) {
       ImGui::EndListBox();
     }
   } else {
-    ImGui::TextWrapped("No adapters found. Click 'Scan'.");
+    ImGui::TextWrapped("No adapters found. Click 'Scan' to detect connected hardware.");
+    ImGui::TextDisabled("Check that cables are plugged in and drivers are installed.");
   }
 
   ImGui::Spacing();
