@@ -10,7 +10,8 @@ can bus diagnostic tool for linux. reverse-engineered usb protocol for vector ha
 
 a can bus tool i built because the existing options on linux are either ancient, proprietary, or both. or they simply dont exist. supports multiple adapters simultaneously, decodes dbc files in real time, and includes what is (to my knowledge) the first open-source linux driver for vector can hardware.
 
-<img src="img/image.png" alt="showcase" width="90%">
+![image1](img/image.png)
+![image2](img/image2.png)
 
 ## supported hardware
 
@@ -34,22 +35,8 @@ cmake -B build
 cmake --build build -j$(nproc)
 ```
 
-system dependencies:
-
-- `libusb-1.0` (optional - needed for vector adapter, auto-detected via pkg-config)
-- opengl headers + drivers
-
-conditional features:
-
 - `JCAN_ENABLE_SOCKETCAN` - auto-enabled on linux
 - `JCAN_ENABLE_VECTOR` - auto-enabled if libusb is found
-
-## run
-
-```bash
-./build/jcan_gui          # full gui
-./build/jcan_cli          # headless frame dump
-```
 
 ## for windows
 
@@ -63,14 +50,6 @@ if you are on windows, you must still install drivers:
 
 - [x] make precompiled binaries for all platforms
 - [x] ensure compilation on all platforms
-- [ ] debug sending messages on vector
+- [x] debug sending messages on vector
 - [ ] add sdk / scripting lang to be able to send messages
 - [ ] add custom views (to prevent single-use scripts)
-
-## keyboard shortcuts
-
-| key      | action               |
-| -------- | -------------------- |
-| `Ctrl+O` | open dbc file        |
-| `Ctrl+R` | start/stop recording |
-| `Ctrl+Q` | quit                 |
