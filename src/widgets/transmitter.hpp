@@ -1,11 +1,13 @@
 #pragma once
 
 #include <imgui.h>
+#include <nfd.h>
 
 #include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <format>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -98,23 +100,49 @@ inline void draw_table_chart(signal_source& src, float width, float height,
     return {std::max(t, 0.0), v};
   };
 
-  int n_grid_x = std::clamp(static_cast<int>(pw / 80.f), 3, 10);
-  int n_grid_y = std::clamp(static_cast<int>(ph / 40.f), 3, 8);
+  auto nice_step = [](double range, int max_ticks) -> double {
+    if (range <= 0.0) return 1.0;
+    double rough = range / std::max(max_ticks, 1);
+    double mag = std::pow(10.0, std::floor(std::log10(rough)));
+    double norm = rough / mag;
+    double nice;
+    if (norm <= 1.0) nice = 1.0;
+    else if (norm <= 2.0) nice = 2.0;
+    else if (norm <= 5.0) nice = 5.0;
+    else nice = 10.0;
+    return nice * mag;
+  };
 
-  for (int i = 0; i <= n_grid_x; ++i) {
-    float frac = static_cast<float>(i) / static_cast<float>(n_grid_x);
-    float x = px0 + frac * pw;
+  auto fmt_val = [](double v, double step) -> std::string {
+    if (step >= 1.0 && std::abs(v - std::round(v)) < 1e-9)
+      return std::format("{:.0f}", v);
+    if (step >= 0.1)
+      return std::format("{:.1f}", v);
+    if (step >= 0.01)
+      return std::format("{:.2f}", v);
+    return std::format("{:.3f}", v);
+  };
+
+  int max_ticks_x = std::clamp(static_cast<int>(pw / 80.f), 3, 10);
+  int max_ticks_y = std::clamp(static_cast<int>(ph / 40.f), 3, 8);
+
+  double t_step = nice_step(t_max_d - t_min_d, max_ticks_x);
+  double t_start = std::ceil(t_min_d / t_step) * t_step;
+  for (double tv = t_start; tv <= t_max_d; tv += t_step) {
+    float x = px0 + static_cast<float>((tv - t_min_d) / (t_max_d - t_min_d) * pw);
+    if (x < px0 || x > px1) continue;
     dl->AddLine({x, py0}, {x, py1}, col_grid);
-    double t_val = t_min_d + frac * (t_max_d - t_min_d);
-    auto txt = std::format("{:.1f}s", t_val);
+    auto txt = fmt_val(tv, t_step) + "s";
     dl->AddText({x - 12.f, py1 + 3.f}, col_text, txt.c_str());
   }
-  for (int i = 0; i <= n_grid_y; ++i) {
-    float frac = static_cast<float>(i) / static_cast<float>(n_grid_y);
-    float y = py1 - frac * ph;
+
+  double v_step = nice_step(v_max_d - v_min_d, max_ticks_y);
+  double v_start = std::ceil(v_min_d / v_step) * v_step;
+  for (double vv = v_start; vv <= v_max_d; vv += v_step) {
+    float y = py1 - static_cast<float>((vv - v_min_d) / (v_max_d - v_min_d) * ph);
+    if (y < py0 || y > py1) continue;
     dl->AddLine({px0, y}, {px1, y}, col_grid);
-    double v_val = v_min_d + frac * (v_max_d - v_min_d);
-    auto txt = std::format("{:.1f}", v_val);
+    auto txt = fmt_val(vv, v_step);
     auto tsz = ImGui::CalcTextSize(txt.c_str());
     dl->AddText({px0 - tsz.x - 4.f, y - tsz.y * 0.5f}, col_text, txt.c_str());
   }
@@ -302,6 +330,48 @@ inline void draw_source_editor(app_state& state, source_editor_state& ed) {
     auto& pts = src.table.points;
 
     jcan::checkbox("Repeat", &src.repeat);
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Export CSV")) {
+      nfdchar_t* out_path = nullptr;
+      nfdfilteritem_t filters[] = {{"CSV", "csv"}};
+      if (NFD_SaveDialog(&out_path, filters, 1, nullptr,
+                          "signal_table.csv") == NFD_OKAY) {
+        std::ofstream ofs(out_path);
+        if (ofs.is_open()) {
+          ofs << "time,value\n";
+          for (const auto& p : pts)
+            ofs << std::format("{:.6f},{:.6f}\n", p.time_sec, p.value);
+        }
+        NFD_FreePath(out_path);
+      }
+    }
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Import CSV")) {
+      nfdchar_t* out_path = nullptr;
+      nfdfilteritem_t filters[] = {{"CSV", "csv"}};
+      if (NFD_OpenDialog(&out_path, filters, 1, nullptr) == NFD_OKAY) {
+        std::ifstream ifs(out_path);
+        if (ifs.is_open()) {
+          pts.clear();
+          std::string line;
+          std::getline(ifs, line);
+          while (std::getline(ifs, line)) {
+            auto comma = line.find(',');
+            if (comma == std::string::npos) continue;
+            try {
+              double t = std::stod(line.substr(0, comma));
+              double v = std::stod(line.substr(comma + 1));
+              pts.push_back({t, v, true});
+            } catch (...) {}
+          }
+          std::sort(pts.begin(), pts.end(),
+                    [](const table_point& a, const table_point& b) {
+                      return a.time_sec < b.time_sec;
+                    });
+        }
+        NFD_FreePath(out_path);
+      }
+    }
 
     float avail_w = ImGui::GetContentRegionAvail().x;
     float avail_h = ImGui::GetContentRegionAvail().y;
@@ -566,7 +636,17 @@ inline void draw_transmitter(app_state& state) {
                                           ImGuiTreeNodeFlags_DefaultOpen);
 
       if (open) {
-        jcan::checkbox("Enable TX", &job.enabled);
+        if (job.enabled) {
+          ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.7f, 0.15f, 0.15f, 1.0f));
+          ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.85f, 0.2f, 0.2f, 1.0f));
+          if (ImGui::Button("Stop")) job.enabled = false;
+          ImGui::PopStyleColor(2);
+        } else {
+          ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.55f, 0.15f, 1.0f));
+          ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.2f, 0.7f, 0.2f, 1.0f));
+          if (ImGui::Button("Start")) job.enabled = true;
+          ImGui::PopStyleColor(2);
+        }
         if (job.enabled && !job.was_enabled)
           job.start_time = tx_job::clock::now();
         job.was_enabled = job.enabled;

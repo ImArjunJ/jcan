@@ -63,7 +63,7 @@ inline void toggle_signal(plotter_state& ps, const signal_key& key) {
 
   chart_trace tr;
   tr.key = key;
-  tr.color = trace_color(static_cast<int>(chart.traces.size()));
+  tr.color = trace_color(global_trace_count(ps.charts));
   chart.traces.push_back(std::move(tr));
 }
 
@@ -181,7 +181,7 @@ inline void draw_plotter(app_state& state, plotter_state& ps) {
               if (!already) {
                 chart_trace tr;
                 tr.key = *key;
-                tr.color = trace_color(static_cast<int>(chart.traces.size()));
+                tr.color = trace_color(global_trace_count(ps.charts));
                 chart.traces.push_back(std::move(tr));
               }
             }

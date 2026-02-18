@@ -8,10 +8,12 @@
 namespace jcan {
 
 enum class theme_id : int {
-  dark_flat = 0,
+  imgui_default = 0,
+  dark_flat,
   midnight,
   automotive,
   light,
+  oled,
   count_,
 };
 
@@ -20,8 +22,10 @@ enum class theme_id : int {
     case theme_id::dark_flat:   return "Dark Flat";
     case theme_id::midnight:    return "Midnight";
     case theme_id::automotive:  return "Automotive";
-    case theme_id::light:       return "Light";
-    default:                    return "Unknown";
+    case theme_id::light:          return "Light";
+    case theme_id::imgui_default:  return "ImGui Classic";
+    case theme_id::oled:           return "OLED";
+    default:                       return "Unknown";
   }
 }
 
@@ -585,6 +589,176 @@ inline semantic_colors apply_light() {
   };
 }
 
+inline semantic_colors apply_imgui_default() {
+  auto& s = ImGui::GetStyle();
+  ImGui::StyleColorsDark();
+
+  s.WindowMenuButtonPosition = ImGuiDir_None;
+  s.AntiAliasedLines  = true;
+  s.AntiAliasedFill   = true;
+  s.HoverDelayShort   = 0.15f;
+  s.HoverDelayNormal  = 0.30f;
+  s.HoverStationaryDelay = 0.15f;
+
+  return {
+      .status_connected    = {0.30f, 1.00f, 0.30f, 1.00f},
+      .status_disconnected = {1.00f, 0.40f, 0.40f, 1.00f},
+      .status_recording    = {1.00f, 0.30f, 0.30f, 1.00f},
+      .byte_changed        = {1.00f, 0.80f, 0.00f, 1.00f},
+      .new_frame_row_bg    = {0.20f, 0.40f, 0.10f, 0.40f},
+      .error_text          = {1.00f, 0.40f, 0.40f, 1.00f},
+      .active_source_label = {0.40f, 0.80f, 1.00f, 1.00f},
+      .load_ok             = {0.20f, 0.80f, 0.20f, 1.00f},
+      .load_warn           = {0.90f, 0.80f, 0.10f, 1.00f},
+      .load_critical       = {1.00f, 0.30f, 0.20f, 1.00f},
+      .live_button         = {0.15f, 0.55f, 0.15f, 1.00f},
+      .paused_button       = {0.55f, 0.45f, 0.10f, 1.00f},
+      .active_chart_header = {0.26f, 0.59f, 0.98f, 0.40f},
+      .chart_bg            = IM_COL32(20, 20, 25, 255),
+      .chart_border        = IM_COL32(60, 60, 70, 255),
+      .chart_grid          = IM_COL32(40, 40, 50, 255),
+      .chart_grid_text     = IM_COL32(130, 130, 150, 255),
+      .chart_cursor        = IM_COL32(200, 200, 200, 120),
+      .editor_bg           = IM_COL32(25, 25, 35, 255),
+      .editor_grid         = IM_COL32(55, 55, 75, 255),
+      .editor_axis         = IM_COL32(120, 120, 140, 255),
+      .editor_line         = IM_COL32(80, 180, 255, 255),
+      .editor_point        = IM_COL32(255, 200, 60, 255),
+      .editor_point_hl     = IM_COL32(255, 255, 130, 255),
+      .editor_text         = IM_COL32(180, 180, 200, 255),
+      .channel_on_chart    = {0.40f, 1.00f, 0.40f, 1.00f},
+      .clear_color         = {0.06f, 0.06f, 0.06f, 1.00f},
+  };
+}
+
+inline semantic_colors apply_oled() {
+  auto& s = ImGui::GetStyle();
+  auto* c = s.Colors;
+
+  ImVec4 bg        {0.00f, 0.00f, 0.00f, 1.00f};
+  ImVec4 bg_light  {0.08f, 0.08f, 0.08f, 1.00f};
+  ImVec4 accent    {1.00f, 1.00f, 1.00f, 1.00f};
+  ImVec4 accent_dim{0.70f, 0.70f, 0.70f, 1.00f};
+  ImVec4 text      {1.00f, 1.00f, 1.00f, 1.00f};
+  ImVec4 text_dim  {0.50f, 0.50f, 0.50f, 1.00f};
+  ImVec4 border    {0.20f, 0.20f, 0.20f, 1.00f};
+
+  c[ImGuiCol_Text]                  = text;
+  c[ImGuiCol_TextDisabled]          = text_dim;
+  c[ImGuiCol_WindowBg]              = bg;
+  c[ImGuiCol_ChildBg]               = {0.00f, 0.00f, 0.00f, 0.00f};
+  c[ImGuiCol_PopupBg]               = {0.05f, 0.05f, 0.05f, 0.98f};
+  c[ImGuiCol_Border]                = border;
+  c[ImGuiCol_BorderShadow]          = {0.00f, 0.00f, 0.00f, 0.00f};
+  c[ImGuiCol_FrameBg]               = bg_light;
+  c[ImGuiCol_FrameBgHovered]        = {0.14f, 0.14f, 0.14f, 1.00f};
+  c[ImGuiCol_FrameBgActive]         = {0.20f, 0.20f, 0.20f, 1.00f};
+  c[ImGuiCol_TitleBg]               = bg;
+  c[ImGuiCol_TitleBgActive]         = {0.06f, 0.06f, 0.06f, 1.00f};
+  c[ImGuiCol_TitleBgCollapsed]      = {0.00f, 0.00f, 0.00f, 0.50f};
+  c[ImGuiCol_MenuBarBg]             = {0.04f, 0.04f, 0.04f, 1.00f};
+  c[ImGuiCol_ScrollbarBg]           = bg;
+  c[ImGuiCol_ScrollbarGrab]         = {0.25f, 0.25f, 0.25f, 1.00f};
+  c[ImGuiCol_ScrollbarGrabHovered]  = {0.35f, 0.35f, 0.35f, 1.00f};
+  c[ImGuiCol_ScrollbarGrabActive]   = {0.45f, 0.45f, 0.45f, 1.00f};
+  c[ImGuiCol_CheckMark]             = accent;
+  c[ImGuiCol_SliderGrab]            = accent_dim;
+  c[ImGuiCol_SliderGrabActive]      = accent;
+  c[ImGuiCol_Button]                = {0.12f, 0.12f, 0.12f, 1.00f};
+  c[ImGuiCol_ButtonHovered]         = {0.22f, 0.22f, 0.22f, 1.00f};
+  c[ImGuiCol_ButtonActive]          = {0.30f, 0.30f, 0.30f, 1.00f};
+  c[ImGuiCol_Header]                = {0.10f, 0.10f, 0.10f, 1.00f};
+  c[ImGuiCol_HeaderHovered]         = {0.18f, 0.18f, 0.18f, 1.00f};
+  c[ImGuiCol_HeaderActive]          = {0.25f, 0.25f, 0.25f, 1.00f};
+  c[ImGuiCol_Separator]             = border;
+  c[ImGuiCol_SeparatorHovered]      = accent_dim;
+  c[ImGuiCol_SeparatorActive]       = accent;
+  c[ImGuiCol_ResizeGrip]            = {0.15f, 0.15f, 0.15f, 0.50f};
+  c[ImGuiCol_ResizeGripHovered]     = accent_dim;
+  c[ImGuiCol_ResizeGripActive]      = accent;
+  c[ImGuiCol_Tab]                   = {0.04f, 0.04f, 0.04f, 1.00f};
+  c[ImGuiCol_TabHovered]            = {0.18f, 0.18f, 0.18f, 1.00f};
+  c[ImGuiCol_TabSelected]           = {0.12f, 0.12f, 0.12f, 1.00f};
+  c[ImGuiCol_TabSelectedOverline]   = accent_dim;
+  c[ImGuiCol_TabDimmed]             = {0.02f, 0.02f, 0.02f, 1.00f};
+  c[ImGuiCol_TabDimmedSelected]     = {0.06f, 0.06f, 0.06f, 1.00f};
+  c[ImGuiCol_DockingPreview]        = {1.00f, 1.00f, 1.00f, 0.30f};
+  c[ImGuiCol_DockingEmptyBg]        = bg;
+  c[ImGuiCol_PlotLines]             = accent_dim;
+  c[ImGuiCol_PlotLinesHovered]      = accent;
+  c[ImGuiCol_PlotHistogram]         = accent_dim;
+  c[ImGuiCol_PlotHistogramHovered]  = accent;
+  c[ImGuiCol_TableHeaderBg]         = {0.06f, 0.06f, 0.06f, 1.00f};
+  c[ImGuiCol_TableBorderStrong]     = {0.16f, 0.16f, 0.16f, 1.00f};
+  c[ImGuiCol_TableBorderLight]      = {0.10f, 0.10f, 0.10f, 1.00f};
+  c[ImGuiCol_TableRowBg]            = {0.00f, 0.00f, 0.00f, 0.00f};
+  c[ImGuiCol_TableRowBgAlt]         = {0.05f, 0.05f, 0.05f, 0.40f};
+  c[ImGuiCol_TextSelectedBg]        = {1.00f, 1.00f, 1.00f, 0.20f};
+  c[ImGuiCol_DragDropTarget]        = accent;
+  c[ImGuiCol_NavHighlight]          = accent;
+  c[ImGuiCol_NavWindowingHighlight] = {1.00f, 1.00f, 1.00f, 0.70f};
+  c[ImGuiCol_NavWindowingDimBg]     = {0.50f, 0.50f, 0.50f, 0.20f};
+  c[ImGuiCol_ModalWindowDimBg]      = {0.00f, 0.00f, 0.00f, 0.70f};
+
+  s.WindowRounding    = 0.0f;
+  s.FrameRounding     = 0.0f;
+  s.GrabRounding      = 0.0f;
+  s.TabRounding       = 0.0f;
+  s.ScrollbarRounding = 0.0f;
+  s.PopupRounding     = 0.0f;
+  s.ChildRounding     = 0.0f;
+  s.FrameBorderSize   = 1.0f;
+  s.WindowBorderSize  = 1.0f;
+  s.TabBorderSize     = 0.0f;
+  s.TabBarBorderSize  = 1.0f;
+  s.TabBarOverlineSize = 0.0f;
+  s.SeparatorTextBorderSize = 1.0f;
+  s.WindowMenuButtonPosition = ImGuiDir_None;
+  s.WindowPadding     = {8.0f, 6.0f};
+  s.FramePadding      = {6.0f, 3.0f};
+  s.CellPadding       = {4.0f, 2.0f};
+  s.ItemSpacing       = {8.0f, 4.0f};
+  s.ItemInnerSpacing  = {4.0f, 4.0f};
+  s.IndentSpacing     = 16.0f;
+  s.ScrollbarSize     = 11.0f;
+  s.GrabMinSize       = 8.0f;
+  s.AntiAliasedLines  = true;
+  s.AntiAliasedFill   = true;
+  s.HoverDelayShort   = 0.15f;
+  s.HoverDelayNormal  = 0.30f;
+  s.HoverStationaryDelay = 0.15f;
+
+  return {
+      .status_connected    = {0.40f, 1.00f, 0.40f, 1.00f},
+      .status_disconnected = {1.00f, 0.40f, 0.40f, 1.00f},
+      .status_recording    = {1.00f, 0.30f, 0.30f, 1.00f},
+      .byte_changed        = {1.00f, 0.90f, 0.00f, 1.00f},
+      .new_frame_row_bg    = {0.15f, 0.15f, 0.15f, 0.60f},
+      .error_text          = {1.00f, 0.40f, 0.40f, 1.00f},
+      .active_source_label = {0.60f, 0.60f, 1.00f, 1.00f},
+      .load_ok             = {0.30f, 0.90f, 0.30f, 1.00f},
+      .load_warn           = {1.00f, 0.90f, 0.10f, 1.00f},
+      .load_critical       = {1.00f, 0.30f, 0.20f, 1.00f},
+      .live_button         = {0.20f, 0.60f, 0.20f, 1.00f},
+      .paused_button       = {0.60f, 0.50f, 0.10f, 1.00f},
+      .active_chart_header = {0.30f, 0.30f, 0.30f, 0.60f},
+      .chart_bg            = IM_COL32(0, 0, 0, 255),
+      .chart_border        = IM_COL32(40, 40, 40, 255),
+      .chart_grid          = IM_COL32(20, 20, 20, 255),
+      .chart_grid_text     = IM_COL32(120, 120, 120, 255),
+      .chart_cursor        = IM_COL32(200, 200, 200, 100),
+      .editor_bg           = IM_COL32(0, 0, 0, 255),
+      .editor_grid         = IM_COL32(25, 25, 25, 255),
+      .editor_axis         = IM_COL32(80, 80, 80, 255),
+      .editor_line         = IM_COL32(200, 200, 200, 255),
+      .editor_point        = IM_COL32(255, 255, 255, 255),
+      .editor_point_hl     = IM_COL32(255, 255, 200, 255),
+      .editor_text         = IM_COL32(150, 150, 150, 255),
+      .channel_on_chart    = {0.50f, 1.00f, 0.50f, 1.00f},
+      .clear_color         = {0.00f, 0.00f, 0.00f, 1.00f},
+  };
+}
+
 }  // namespace detail
 
 [[nodiscard]] inline semantic_colors apply_theme(theme_id id, float ui_scale) {
@@ -592,11 +766,13 @@ inline semantic_colors apply_light() {
 
   semantic_colors colors;
   switch (id) {
-    case theme_id::dark_flat:  colors = detail::apply_dark_flat();  break;
-    case theme_id::midnight:   colors = detail::apply_midnight();   break;
-    case theme_id::automotive: colors = detail::apply_automotive(); break;
-    case theme_id::light:      colors = detail::apply_light();      break;
-    default:                   colors = detail::apply_dark_flat();  break;
+    case theme_id::dark_flat:     colors = detail::apply_dark_flat();     break;
+    case theme_id::midnight:      colors = detail::apply_midnight();      break;
+    case theme_id::automotive:    colors = detail::apply_automotive();  break;
+    case theme_id::light:         colors = detail::apply_light();         break;
+    case theme_id::imgui_default: colors = detail::apply_imgui_default(); break;
+    case theme_id::oled:          colors = detail::apply_oled();          break;
+    default:                      colors = detail::apply_imgui_default(); break;
   }
 
   ImGui::GetStyle().ScaleAllSizes(ui_scale);

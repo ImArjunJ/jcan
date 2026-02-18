@@ -49,14 +49,20 @@ struct strip_chart_state {
 
 inline ImU32 trace_color(int index) {
   static const ImU32 palette[] = {
-      IM_COL32(100, 200, 255, 255), IM_COL32(255, 100, 100, 255),
-      IM_COL32(100, 255, 100, 255), IM_COL32(255, 200, 50, 255),
+      IM_COL32(100, 255, 100, 255), IM_COL32(100, 200, 255, 255),
+      IM_COL32(255, 100, 100, 255), IM_COL32(255, 200, 50, 255),
       IM_COL32(200, 100, 255, 255), IM_COL32(255, 150, 50, 255),
       IM_COL32(50, 255, 200, 255),  IM_COL32(255, 100, 200, 255),
       IM_COL32(150, 150, 255, 255), IM_COL32(200, 255, 100, 255),
   };
   constexpr int n = sizeof(palette) / sizeof(palette[0]);
   return palette[index % n];
+}
+
+inline int global_trace_count(const std::vector<strip_chart_state>& charts) {
+  int total = 0;
+  for (const auto& c : charts) total += static_cast<int>(c.traces.size());
+  return total;
 }
 
 inline bool draw_strip_chart(strip_chart_state& chart,
@@ -424,7 +430,8 @@ inline bool draw_strip_chart(strip_chart_state& chart,
     if (!already) {
       chart_trace new_tr;
       new_tr.key = dropped_key;
-      new_tr.color = trace_color(static_cast<int>(chart.traces.size()));
+      static int s_global_color_idx = 0;
+      new_tr.color = trace_color(s_global_color_idx++);
       chart.traces.push_back(std::move(new_tr));
     }
   }

@@ -160,7 +160,7 @@ struct settings {
         if (ui_scale > 3.0f) ui_scale = 3.0f;
       }
     }
-    theme = std::clamp(get_int("theme", 0), 0, 3);
+    theme = std::clamp(get_int("theme", 0), 0, 5);
     log_dir = get_str("log_dir");
 
     return true;
