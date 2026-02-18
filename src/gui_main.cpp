@@ -640,11 +640,9 @@ int main() {
                       "MoTec: {} channels, {:.1f}s{}", ld.channels.size(), dur,
                       meta.empty() ? "" : " [" + meta + "]");
 
-                  for (auto& c : plotter.charts) {
-                    c.view_duration_sec = dur * 1.05f;
-                    c.view_end_offset_sec = 0.0f;
+                  plotter.pending_fit = true;
+                  for (auto& c : plotter.charts)
                     c.live_follow = false;
-                  }
                 } else {
                   state.status_text =
                       std::format("MoTec import failed: {}", ld_result.error());
@@ -661,11 +659,9 @@ int main() {
                       std::format("Imported {} frames ({:.1f}s)",
                                   state.scrollback.size(), dur);
 
-                  for (auto& c : plotter.charts) {
-                    c.view_duration_sec = dur * 1.05f;
-                    c.view_end_offset_sec = 0.0f;
+                  plotter.pending_fit = true;
+                  for (auto& c : plotter.charts)
                     c.live_follow = false;
-                  }
                 } else {
                   auto fname = std::filesystem::path(path_str).filename().string();
                   if (std::filesystem::file_size(path_str) == 0)

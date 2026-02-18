@@ -220,6 +220,11 @@ inline bool draw_strip_chart(strip_chart_state& chart,
         chart.y_min + (1.0 - (io.MousePos.y - canvas_pos.y) / canvas_size.y) *
                           (chart.y_max - chart.y_min));
 
+    float y_range = static_cast<float>(chart.y_max - chart.y_min);
+    if (y_range < 1e-9f) y_range = 1.0f;
+    float mouse_px_x = io.MousePos.x;
+    float mouse_px_y = io.MousePos.y;
+
     int best_trace = -1;
     float best_dist = 1e30f;
     for (int ti = 0; ti < static_cast<int>(chart.traces.size()); ++ti) {
@@ -231,8 +236,12 @@ inline bool draw_strip_chart(strip_chart_state& chart,
       if (!samps || samps->empty()) continue;
       for (const auto& s : *samps) {
         float age = std::chrono::duration<float>(now - s.time).count() + toff;
-        if (std::abs(age - mouse_age) > chart.view_duration_sec * 0.1f) continue;
-        float dist = std::abs(static_cast<float>(s.value) - mouse_y);
+        if (age > view_start_sec || age < view_end_sec) continue;
+        float px_x = canvas_pos.x + (1.0f - (age - view_end_sec) / chart.view_duration_sec) * canvas_size.x;
+        float px_y = canvas_pos.y + (1.0f - static_cast<float>((s.value - chart.y_min) / (chart.y_max - chart.y_min))) * canvas_size.y;
+        float dx = px_x - mouse_px_x;
+        float dy = px_y - mouse_px_y;
+        float dist = dx * dx + dy * dy;
         if (dist < best_dist) {
           best_dist = dist;
           best_trace = ti;

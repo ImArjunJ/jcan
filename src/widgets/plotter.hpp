@@ -22,6 +22,7 @@ struct plotter_state {
   float shared_duration{10.0f};
   float shared_offset{0.0f};
   signal_sample::clock::time_point shared_pause_time{};
+  bool pending_fit{false};
 
   plotter_state() { charts.emplace_back(); }
 
@@ -114,6 +115,14 @@ inline void draw_plotter(app_state& state, plotter_state& ps) {
           ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
     if (ImGui::SmallButton("+ Chart")) {
       ps.charts.emplace_back();
+    }
+    if (!state.overlay_layers.empty()) {
+      ImGui::SameLine();
+      if (ImGui::SmallButton("Reset Offsets")) {
+        for (auto& ch : ps.charts)
+          for (auto& tr : ch.traces)
+            tr.time_offset_sec = 0.f;
+      }
     }
     ImGui::SameLine();
     ImGui::TextDisabled("(%zu chart%s, %zu channels, %zu samples)  Scroll=Zoom  Drag=Pan  W=Fit%s%s",
@@ -228,32 +237,51 @@ inline void draw_plotter(app_state& state, plotter_state& ps) {
       }
     }
 
-    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows) &&
-        ImGui::IsKeyPressed(ImGuiKey_W)) {
-      auto fit_now = signal_sample::clock::now();
-      float oldest_age = 0.f;
-      auto fit_channels = state.signals.all_channels();
-      for (const auto* ch : fit_channels) {
-        const auto* samps = state.signals.samples(ch->key);
-        if (samps && !samps->empty()) {
-          float age = std::chrono::duration<float>(fit_now - samps->front().time).count();
-          oldest_age = std::max(oldest_age, age);
-        }
-      }
-      for (const auto& ov : state.overlay_layers) {
-        auto ov_channels = ov.signals.all_channels();
-        for (const auto* ch : ov_channels) {
-          const auto* samps = ov.signals.samples(ch->key);
+    auto do_fit = [&]() {
+      signal_sample::clock::time_point earliest{};
+      signal_sample::clock::time_point latest{};
+      bool found = false;
+      auto scan = [&](const signal_store& store) {
+        auto channels = store.all_channels();
+        for (const auto* ch : channels) {
+          const auto* samps = store.samples(ch->key);
           if (samps && !samps->empty()) {
-            float age = std::chrono::duration<float>(fit_now - samps->front().time).count();
-            oldest_age = std::max(oldest_age, age);
+            if (!found || samps->front().time < earliest)
+              earliest = samps->front().time;
+            if (!found || samps->back().time > latest)
+              latest = samps->back().time;
+            found = true;
           }
         }
+      };
+      scan(state.signals);
+      for (const auto& ov : state.overlay_layers)
+        scan(ov.signals);
+      if (!found) return;
+
+      float span = std::chrono::duration<float>(latest - earliest).count();
+      if (span < 0.1f) span = 10.f;
+
+      for (auto& c : ps.charts) {
+        c.pause_time = latest;
+        c.live_follow = false;
+        c.view_duration_sec = span * 1.05f;
+        c.view_end_offset_sec = 0.0f;
       }
-      if (oldest_age < 0.1f) oldest_age = 10.f;
-      ps.shared_duration = oldest_age * 1.05f;
+      ps.shared_live = false;
+      ps.shared_duration = span * 1.05f;
       ps.shared_offset = 0.0f;
-      if (!state.log_mode) ps.shared_live = true;
+      ps.shared_pause_time = latest;
+    };
+
+    if (ps.pending_fit) {
+      do_fit();
+      ps.pending_fit = false;
+    }
+
+    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows) &&
+        ImGui::IsKeyPressed(ImGuiKey_W)) {
+      do_fit();
     }
   }
   ImGui::EndChild();
