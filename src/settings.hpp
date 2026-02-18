@@ -20,6 +20,7 @@ struct settings {
   int window_width{1280};
   int window_height{800};
   float ui_scale{1.0f};
+  int theme{0};
   std::string log_dir;
 
   static std::filesystem::path default_log_dir() {
@@ -91,6 +92,7 @@ struct settings {
     ofs << "window_width=" << window_width << "\n";
     ofs << "window_height=" << window_height << "\n";
     ofs << "ui_scale=" << ui_scale << "\n";
+    ofs << "theme=" << theme << "\n";
     ofs << "log_dir=" << log_dir << "\n";
 
     return true;
@@ -158,6 +160,7 @@ struct settings {
         if (ui_scale > 3.0f) ui_scale = 3.0f;
       }
     }
+    theme = std::clamp(get_int("theme", 0), 0, 3);
     log_dir = get_str("log_dir");
 
     return true;

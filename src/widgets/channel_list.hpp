@@ -18,7 +18,8 @@ struct channel_list_state {
 inline void draw_channel_list(
     channel_list_state& cl, const signal_store& store,
     const std::function<std::string(uint32_t)>& dbc_msg_name_fn,
-    const std::function<bool(const signal_key&)>& is_on_chart) {
+    const std::function<bool(const signal_key&)>& is_on_chart,
+    ImVec4 on_chart_color = ImVec4(0.4f, 1.0f, 0.4f, 1.0f)) {
   ImGui::SetNextItemWidth(-1);
   ImGui::InputTextWithHint("##ch_filter", "Search channels...", cl.filter,
                            sizeof(cl.filter));
@@ -73,10 +74,11 @@ inline void draw_channel_list(
         ImGui::PushID(i);
 
         if (on) {
-          ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 1.0f, 0.4f, 1.0f));
+          ImGui::PushStyleColor(ImGuiCol_Text, on_chart_color);
         }
 
         ImGui::Selectable("##sel", on, ImGuiSelectableFlags_SpanAllColumns);
+        bool row_hovered = ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip);
 
         if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
           const signal_key* ptr = &ch->key;
@@ -86,17 +88,13 @@ inline void draw_channel_list(
         }
 
         ImGui::SameLine();
-
-        ImGui::Text("%s", ch->key.name.c_str());
-        ImGui::SameLine(ImGui::GetContentRegionAvail().x - 90);
-        ImGui::TextDisabled("%.4g%s", ch->last_value,
-                            ch->unit.empty() ? "" : (" " + ch->unit).c_str());
+        ImGui::TextUnformatted(ch->key.name.c_str());
 
         if (on) {
           ImGui::PopStyleColor();
         }
 
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) {
+        if (row_hovered) {
           ImGui::BeginTooltip();
           auto msg_name = dbc_msg_name_fn(ch->key.msg_id);
           ImGui::Text("Message: %s (0x%03X)", msg_name.c_str(), ch->key.msg_id);

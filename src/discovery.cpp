@@ -327,8 +327,6 @@ static const known_vector_device* find_known_vector(int pid) {
 #ifdef JCAN_HAS_KVASER
         if (vid == 0x0BFD) {
 #ifdef _WIN32
-          // On Windows, always skip libusb for Kvaser — use canlib backend
-          // instead
           continue;
 #endif
           std::string product;

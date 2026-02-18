@@ -93,7 +93,8 @@ inline void draw_plotter(app_state& state, plotter_state& ps) {
     auto is_on = [&ps](const signal_key& key) -> bool {
       return is_signal_on_any_chart(ps, key);
     };
-    draw_channel_list(ps.channel_list, state.signals, msg_name_fn, is_on);
+    draw_channel_list(ps.channel_list, state.signals, msg_name_fn, is_on,
+                      state.colors.channel_on_chart);
   }
   ImGui::EndChild();
 
@@ -111,16 +112,16 @@ inline void draw_plotter(app_state& state, plotter_state& ps) {
                         state.signals.channel_count(),
                         state.signals.total_samples());
 
-    if (!ps.charts.empty()) {
+    if (!ps.charts.empty() && !state.log_mode) {
       ImGui::SameLine();
       if (ps.shared_live) {
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.5f, 0.2f, 0.7f));
+        ImGui::PushStyleColor(ImGuiCol_Button, state.colors.live_button);
         if (ImGui::SmallButton("LIVE")) ps.shared_live = false;
         ImGui::PopStyleColor();
         if (ImGui::IsItemHovered())
           ImGui::SetTooltip("Click or press Space to pause");
       } else {
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.6f, 0.3f, 0.1f, 0.7f));
+        ImGui::PushStyleColor(ImGuiCol_Button, state.colors.paused_button);
         if (ImGui::SmallButton("PAUSED")) {
           ps.shared_live = true;
           ps.shared_offset = 0.0f;
@@ -130,6 +131,7 @@ inline void draw_plotter(app_state& state, plotter_state& ps) {
           ImGui::SetTooltip("Click or press Space to resume live");
       }
     }
+    if (state.log_mode) ps.shared_live = false;
 
     ImGui::Separator();
 
@@ -157,7 +159,7 @@ inline void draw_plotter(app_state& state, plotter_state& ps) {
                                           chart.traces.size() != 1 ? "s" : "");
           if (is_active)
             ImGui::PushStyleColor(ImGuiCol_Header,
-                                  ImVec4(0.2f, 0.4f, 0.6f, 0.5f));
+                                  state.colors.active_chart_header);
           if (ImGui::Selectable(label.c_str(), is_active,
                                 ImGuiSelectableFlags_None,
                                 ImVec2(0, ImGui::GetTextLineHeight())))
@@ -197,13 +199,14 @@ inline void draw_plotter(app_state& state, plotter_state& ps) {
           }
         }
 
-        draw_strip_chart(chart, state.signals, chart_h);
+        draw_strip_chart(chart, state.signals, state.colors, chart_h);
         ps.sync_from_chart(chart);
         ImGui::PopID();
       }
     }
 
-    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows) &&
+    if (!state.log_mode &&
+        ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows) &&
         ImGui::IsKeyPressed(ImGuiKey_Space)) {
       if (ps.shared_live)
         ps.shared_live = false;
@@ -217,7 +220,7 @@ inline void draw_plotter(app_state& state, plotter_state& ps) {
         ImGui::IsKeyPressed(ImGuiKey_W)) {
       ps.shared_duration = static_cast<float>(state.signals.max_seconds());
       ps.shared_offset = 0.0f;
-      ps.shared_live = true;
+      if (!state.log_mode) ps.shared_live = true;
     }
   }
   ImGui::EndChild();

@@ -21,6 +21,7 @@
 #include "discovery.hpp"
 #include "logger.hpp"
 #include "settings.hpp"
+#include "theme.hpp"
 #include "widgets/connection.hpp"
 #include "widgets/monitor.hpp"
 #include "widgets/plotter.hpp"
@@ -74,7 +75,7 @@ static void setup_default_layout(ImGuiID dockspace_id) {
   ImGui::DockBuilderDockWindow("Bus Monitor - Live", top);
   ImGui::DockBuilderDockWindow("Signals", top);
   ImGui::DockBuilderDockWindow("Analysis", top);
-  ImGui::DockBuilderDockWindow("Bus Monitor - Scrollback", bot_left);
+  ImGui::DockBuilderDockWindow("###scrollback", bot_left);
   ImGui::DockBuilderDockWindow("Bus Statistics", bot_left);
   ImGui::DockBuilderDockWindow("Transmitter", bot_right);
 
@@ -114,13 +115,7 @@ int main() {
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
-
-    ImGui::StyleColorsDark();
-
-    ImGuiStyle& style = ImGui::GetStyle();
-    style.FrameRounding = 4.0f;
-    style.GrabRounding = 3.0f;
-    style.WindowRounding = 6.0f;
+    io.ConfigDockingWithShift = true;
 
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init("#version 330");
@@ -165,14 +160,8 @@ int main() {
     auto& state = *state_storage;
     state.mono_font = mono_font;
     state.ui_scale = current_scale;
-    {
-      ImGui::GetStyle() = ImGuiStyle();
-      ImGuiStyle& s = ImGui::GetStyle();
-      s.FrameRounding = 4.0f;
-      s.GrabRounding = 3.0f;
-      s.WindowRounding = 6.0f;
-      s.ScaleAllSizes(current_scale);
-    }
+    state.current_theme = static_cast<jcan::theme_id>(settings.theme);
+    state.colors = jcan::apply_theme(state.current_theme, current_scale);
 
     state.selected_bitrate = settings.selected_bitrate;
     state.show_signals = settings.show_signals;
@@ -202,6 +191,8 @@ int main() {
     bool first_frame = true;
     bool was_focused = true;
     float pending_scale = 0.f;
+    bool pending_theme = false;
+    bool pending_import_confirm = false;
     jcan::widgets::plotter_state plotter;
 
     while (!glfwWindowShouldClose(window)) {
@@ -221,15 +212,11 @@ int main() {
         continue;
       }
 
-      if (pending_scale > 0.f) {
-        ImGui::GetStyle() = ImGuiStyle();
-        ImGuiStyle& s = ImGui::GetStyle();
-        s.FrameRounding = 4.0f;
-        s.GrabRounding = 3.0f;
-        s.WindowRounding = 6.0f;
-        s.ScaleAllSizes(pending_scale);
+      if (pending_scale > 0.f || pending_theme) {
+        float scale = (pending_scale > 0.f) ? pending_scale : current_scale;
+        state.colors = jcan::apply_theme(state.current_theme, scale);
         io.Fonts->Clear();
-        float font_size = std::round(14.0f * pending_scale);
+        float font_size = std::round(14.0f * scale);
         if (!mono_font_path.empty())
           mono_font =
               io.Fonts->AddFontFromFileTTF(mono_font_path.c_str(), font_size);
@@ -237,7 +224,9 @@ int main() {
         ImGui_ImplOpenGL3_DestroyFontsTexture();
         ImGui_ImplOpenGL3_CreateFontsTexture();
         state.mono_font = mono_font;
+        if (pending_scale > 0.f) current_scale = pending_scale;
         pending_scale = 0.f;
+        pending_theme = false;
       }
 
       ImGui_ImplOpenGL3_NewFrame();
@@ -245,7 +234,8 @@ int main() {
       ImGui::NewFrame();
 
       ImGuiID dockspace_id = ImGui::DockSpaceOverViewport(
-          0, ImGui::GetMainViewport(), ImGuiDockNodeFlags_PassthruCentralNode);
+          0, ImGui::GetMainViewport(),
+          ImGuiDockNodeFlags_PassthruCentralNode | ImGuiDockNodeFlags_NoUndocking);
 
       if (first_frame) {
         setup_default_layout(dockspace_id);
@@ -331,10 +321,14 @@ int main() {
           }
           if (ImGui::MenuItem("Import Log...", "Ctrl+I", false,
                               !file_dialog.busy())) {
-            file_dialog.open_file({{"All Logs", "csv,asc,ld"},
-                                   {"MoTec i2", "ld"},
-                                   {"CSV / ASC", "csv,asc"}});
-            pending_dialog = dialog_id::import_log;
+            if (state.connected) {
+              pending_import_confirm = true;
+            } else {
+              file_dialog.open_file({{"All Logs", "csv,asc,ld"},
+                                     {"MoTec i2", "ld"},
+                                     {"CSV / ASC", "csv,asc"}});
+              pending_dialog = dialog_id::import_log;
+            }
           }
           if (!state.replaying.load()) {
             if (ImGui::MenuItem("Replay Log...", nullptr, false,
@@ -395,6 +389,17 @@ int main() {
             }
             ImGui::EndMenu();
           }
+          if (ImGui::BeginMenu("Theme")) {
+            for (int i = 0; i < static_cast<int>(jcan::theme_id::count_); ++i) {
+              auto tid = static_cast<jcan::theme_id>(i);
+              bool sel = (state.current_theme == tid);
+              if (ImGui::MenuItem(std::string(jcan::theme_name(tid)).c_str(), nullptr, sel)) {
+                state.current_theme = tid;
+                pending_theme = true;
+              }
+            }
+            ImGui::EndMenu();
+          }
           ImGui::EndMenu();
         }
 
@@ -408,42 +413,52 @@ int main() {
           ImGui::TextDisabled("%s", conn_label.c_str());
           ImGui::Separator();
           if (ImGui::MenuItem("Open Connection Dialog..."))
-            state.show_connection_modal = true;
+            state.show_connection = true;
           if (state.connected) {
             if (ImGui::MenuItem("Disconnect All")) state.disconnect();
           }
           ImGui::EndMenu();
         }
 
-        std::string full_status;
-        if (state.logger.recording())
-          full_status += std::format("[LOG:{}] ", state.logger.frame_count());
-        if (state.exporting.load())
-          full_status += std::format("[EXPORT:{:.0f}%] ",
-                                     state.export_progress.load() * 100.f);
-        if (state.replaying.load()) {
-          bool paused = state.replay_paused.load();
-          float speed = state.replay_speed.load();
-          full_status += std::format(
-              "[REPLAY:{:.0f}%{}{}] ", state.replay_progress.load() * 100.f,
-              paused ? " PAUSED" : "",
-              speed != 1.0f ? std::format(" {:.2g}x", speed) : "");
-        }
-        if (state.dbc.loaded()) {
-          auto dbc_names = state.dbc.filenames();
-          for (const auto& dn : dbc_names)
-            full_status += std::format("[{}] ", dn);
-        }
-        full_status += state.status_text;
+        {
+          static constexpr float bitrates_sb[] = {
+              10000, 20000, 50000, 100000, 125000, 250000, 500000, 800000, 1000000};
+          state.stats.update(bitrates_sb[std::clamp(state.selected_bitrate, 0, 8)]);
 
-        float status_width = ImGui::CalcTextSize(full_status.c_str()).x + 16;
-        ImGui::SameLine(ImGui::GetWindowWidth() - status_width);
-        if (state.connected)
-          ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "%s",
-                             full_status.c_str());
-        else
-          ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s",
-                             full_status.c_str());
+          std::string status;
+          if (state.connected) {
+            status += std::format("{:.0f}% | {:.0f}/s",
+                                  state.stats.bus_load_pct, state.stats.total_rate_hz);
+          }
+          if (state.logger.recording()) {
+            if (!status.empty()) status += " | ";
+            status += std::format("REC {}", state.logger.frame_count());
+          }
+          if (state.exporting.load()) {
+            if (!status.empty()) status += " | ";
+            status += std::format("EXP {:.0f}%", state.export_progress.load() * 100.f);
+          }
+          if (state.replaying.load()) {
+            if (!status.empty()) status += " | ";
+            status += std::format("{} {:.0f}%",
+                                  state.replay_paused.load() ? "PAUSED" : "REPLAY",
+                                  state.replay_progress.load() * 100.f);
+          }
+          if (!status.empty()) status += " | ";
+          if (state.connected) {
+            status += "Connected";
+            if (state.adapter_slots.size() > 1)
+              status += std::format(" ({})", state.adapter_slots.size());
+          } else {
+            status += "Disconnected";
+          }
+
+          float status_w = ImGui::CalcTextSize(status.c_str()).x + 16.f;
+          ImGui::SameLine(ImGui::GetWindowWidth() - status_w);
+          ImGui::TextColored(
+              state.connected ? state.colors.status_connected : state.colors.status_disconnected,
+              "%s", status.c_str());
+        }
 
         ImGui::EndMainMenuBar();
       }
@@ -470,10 +485,38 @@ int main() {
       }
       if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_I) &&
           !file_dialog.busy()) {
-        file_dialog.open_file({{"All Logs", "csv,asc,ld"},
-                               {"MoTec i2", "ld"},
-                               {"CSV / ASC", "csv,asc"}});
-        pending_dialog = dialog_id::import_log;
+        if (state.connected) {
+          pending_import_confirm = true;
+        } else {
+          file_dialog.open_file({{"All Logs", "csv,asc,ld"},
+                                 {"MoTec i2", "ld"},
+                                 {"CSV / ASC", "csv,asc"}});
+          pending_dialog = dialog_id::import_log;
+        }
+      }
+
+      if (pending_import_confirm) {
+        ImGui::OpenPopup("Import Log##confirm");
+        pending_import_confirm = false;
+      }
+      if (ImGui::BeginPopupModal("Import Log##confirm", nullptr,
+                                  ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Importing a log will disconnect all adapters\nand unload DBC files.");
+        ImGui::Spacing();
+        if (ImGui::Button("Continue", ImVec2(120, 0))) {
+          state.disconnect();
+          state.dbc.unload();
+          file_dialog.open_file({{"All Logs", "csv,asc,ld"},
+                                 {"MoTec i2", "ld"},
+                                 {"CSV / ASC", "csv,asc"}});
+          pending_dialog = dialog_id::import_log;
+          ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+          ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
       }
 
       if (auto result = file_dialog.poll()) {
@@ -595,7 +638,7 @@ int main() {
         state.export_result_msg.clear();
       }
 
-      jcan::widgets::draw_connection_modal(state);
+      jcan::widgets::draw_connection_panel(state);
       jcan::widgets::draw_monitor_live(state);
       jcan::widgets::draw_monitor_scrollback(state);
 
@@ -610,7 +653,8 @@ int main() {
       int display_w, display_h;
       glfwGetFramebufferSize(window, &display_w, &display_h);
       glViewport(0, 0, display_w, display_h);
-      glClearColor(0.08f, 0.08f, 0.10f, 1.0f);
+      glClearColor(state.colors.clear_color.x, state.colors.clear_color.y,
+                   state.colors.clear_color.z, state.colors.clear_color.w);
       glClear(GL_COLOR_BUFFER_BIT);
       ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
       glfwSwapBuffers(window);
@@ -625,6 +669,7 @@ int main() {
       settings.show_statistics = state.show_statistics;
       settings.show_plotter = state.show_plotter;
       settings.ui_scale = state.ui_scale;
+      settings.theme = static_cast<int>(state.current_theme);
       settings.log_dir = state.log_dir.string();
       settings.dbc_paths = state.dbc.paths();
       if (!state.adapter_slots.empty())

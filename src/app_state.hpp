@@ -28,6 +28,7 @@ struct ImFont;
 #include "motec_ld.hpp"
 #include "permissions.hpp"
 #include "signal_store.hpp"
+#include "theme.hpp"
 #include "tx_scheduler.hpp"
 #include "types.hpp"
 
@@ -174,13 +175,15 @@ struct app_state {
   char scrollback_filter_text[64]{};
   static constexpr std::size_t k_max_scrollback = 100'000;
 
-  bool show_connection_modal{true};
+  bool show_connection{true};
   float ui_scale{1.0f};
   bool show_signals{true};
   bool show_transmitter{true};
   bool show_statistics{true};
   bool show_plotter{true};
   ImFont* mono_font{nullptr};
+  semantic_colors colors{};
+  theme_id current_theme{theme_id::dark_flat};
 
   can_frame::clock::time_point first_frame_time{};
   bool has_first_frame{false};
@@ -550,8 +553,7 @@ struct app_state {
     auto replay_frames = replay_buf.drain();
     frames.insert(frames.end(), replay_frames.begin(), replay_frames.end());
 
-    auto tx_frames = tx_sched.drain_sent();
-    frames.insert(frames.end(), tx_frames.begin(), tx_frames.end());
+    (void)tx_sched.drain_sent();
 
     for (auto& f : frames) {
       if (!has_first_frame) {

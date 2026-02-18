@@ -218,7 +218,7 @@ inline void draw_monitor_live(app_state& state) {
         if (!state.frozen_rows.empty() && !frozen_row) {
           ImGui::TableSetBgColor(
               ImGuiTableBgTarget_RowBg1,
-              ImGui::GetColorU32(ImVec4(0.2f, 0.4f, 0.1f, 0.4f)));
+              ImGui::GetColorU32(state.colors.new_frame_row_bg));
         }
         ImGui::TableNextColumn();
         if (row.frame.source == 0xff)
@@ -251,7 +251,7 @@ inline void draw_monitor_live(app_state& state) {
                             row.frame.data[i] != frozen_row->frame.data[i]);
             if (changed)
               ImGui::PushStyleColor(ImGuiCol_Text,
-                                    ImVec4(1.0f, 0.8f, 0.0f, 1.0f));
+                                    state.colors.byte_changed);
             ImGui::Text("%02X", row.frame.data[i]);
             if (changed) ImGui::PopStyleColor();
           }
@@ -334,16 +334,13 @@ inline void draw_monitor_live(app_state& state) {
 
 inline void draw_monitor_scrollback(app_state& state) {
   ImGui::SetNextWindowSize(ImVec2(700, 300), ImGuiCond_FirstUseEver);
-  if (ImGui::Begin("Bus Monitor - Scrollback")) {
-    if (state.logger.recording()) {
-      ImGui::Text("Scrollback: %zu  |  Logged: %zu", state.scrollback.size(),
-                  state.logger.frame_count());
-    } else {
-      ImGui::Text("Scrollback: %zu / %zu", state.scrollback.size(),
-                  state.k_max_scrollback);
-    }
-    ImGui::SameLine();
-    ImGui::Checkbox("Auto-scroll", &state.monitor_autoscroll);
+  auto title = state.logger.recording()
+      ? std::format("Scrollback ({} frames, {} logged)###scrollback",
+                    state.scrollback.size(), state.logger.frame_count())
+      : std::format("Scrollback ({} frames)###scrollback",
+                    state.scrollback.size());
+  if (ImGui::Begin(title.c_str())) {
+    jcan::checkbox("Auto-scroll", &state.monitor_autoscroll);
     ImGui::SameLine();
     ImGui::SetNextItemWidth(200);
     ImGui::InputTextWithHint("##sb_filter", "Filter (ID or name)...",

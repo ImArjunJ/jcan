@@ -20,12 +20,6 @@ inline void draw_statistics(app_state& state) {
 
   auto& st = state.stats;
 
-  static constexpr float bitrates[] = {
-      10000, 20000, 50000, 100000, 125000, 250000, 500000, 800000, 1000000,
-  };
-  float bps = bitrates[std::clamp(state.selected_bitrate, 0, 8)];
-  st.update(bps);
-
   auto total_text = std::format("Total frames: {}", st.total_frames);
   ImGui::TextUnformatted(total_text.c_str());
   ImGui::SameLine();
@@ -35,23 +29,24 @@ inline void draw_statistics(app_state& state) {
   ImGui::TextUnformatted(rate_text.c_str());
 
   float load = std::clamp(st.bus_load_pct, 0.f, 100.f);
-  auto load_label = std::format("{:.1f}%%", load);
+  auto load_label = std::format("{:.1f}%", load);
+  ImGui::AlignTextToFramePadding();
   ImGui::Text("Bus load:");
   ImGui::SameLine();
   ImVec4 load_color;
   if (load < 50.f)
-    load_color = ImVec4(0.2f, 0.8f, 0.2f, 1.0f);
+    load_color = state.colors.load_ok;
   else if (load < 80.f)
-    load_color = ImVec4(0.9f, 0.8f, 0.1f, 1.0f);
+    load_color = state.colors.load_warn;
   else
-    load_color = ImVec4(1.0f, 0.3f, 0.2f, 1.0f);
+    load_color = state.colors.load_critical;
   ImGui::PushStyleColor(ImGuiCol_PlotHistogram, load_color);
   ImGui::ProgressBar(load / 100.f, ImVec2(200, 0), load_label.c_str());
   ImGui::PopStyleColor();
 
   if (st.error_frames > 0 || st.bus_off_count > 0 ||
       st.error_passive_count > 0) {
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text, state.colors.error_text);
     auto err_text =
         std::format("Errors: {}  Bus-off: {}  Error-passive: {}",
                     st.error_frames, st.bus_off_count, st.error_passive_count);

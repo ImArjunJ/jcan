@@ -26,7 +26,8 @@ struct source_editor_state {
 };
 
 inline void draw_table_chart(signal_source& src, float width, float height,
-                             source_editor_state& ed) {
+                             source_editor_state& ed,
+                             const jcan::semantic_colors& colors) {
   auto& pts = src.table.points;
 
   double t_min_d = 0.0, t_max_d = 10.0;
@@ -65,13 +66,13 @@ inline void draw_table_chart(signal_source& src, float width, float height,
   bool hovered = ImGui::IsItemHovered();
 
   auto* dl = ImGui::GetWindowDrawList();
-  ImU32 col_bg = IM_COL32(25, 25, 35, 255);
-  ImU32 col_grid = IM_COL32(55, 55, 75, 255);
-  ImU32 col_axis = IM_COL32(120, 120, 140, 255);
-  ImU32 col_line = IM_COL32(80, 180, 255, 255);
-  ImU32 col_point = IM_COL32(255, 200, 60, 255);
-  ImU32 col_point_hl = IM_COL32(255, 255, 130, 255);
-  ImU32 col_text = IM_COL32(180, 180, 200, 255);
+  ImU32 col_bg = colors.editor_bg;
+  ImU32 col_grid = colors.editor_grid;
+  ImU32 col_axis = colors.editor_axis;
+  ImU32 col_line = colors.editor_line;
+  ImU32 col_point = colors.editor_point;
+  ImU32 col_point_hl = colors.editor_point_hl;
+  ImU32 col_text = colors.editor_text;
 
   float px0 = canvas_pos.x + left_margin;
   float py0 = canvas_pos.y + top_pad;
@@ -285,7 +286,7 @@ inline void draw_source_editor(app_state& state, source_editor_state& ed) {
     ImGui::SetNextItemWidth(150.f);
     ImGui::InputDouble("Period (s)", &src.waveform.period_sec, 0, 0, "%.3f");
     src.waveform.period_sec = std::max(0.001, src.waveform.period_sec);
-    ImGui::Checkbox("Repeat", &src.repeat);
+    jcan::checkbox("Repeat", &src.repeat);
 
     ImGui::Spacing();
     float preview[256];
@@ -300,7 +301,7 @@ inline void draw_source_editor(app_state& state, source_editor_state& ed) {
   else if (src.mode == source_mode::table) {
     auto& pts = src.table.points;
 
-    ImGui::Checkbox("Repeat", &src.repeat);
+    jcan::checkbox("Repeat", &src.repeat);
 
     float avail_w = ImGui::GetContentRegionAvail().x;
     float avail_h = ImGui::GetContentRegionAvail().y;
@@ -350,7 +351,7 @@ inline void draw_source_editor(app_state& state, source_editor_state& ed) {
     if (ImGui::BeginChild("##ptchart", ImVec2(0, avail_h), false)) {
       float cw = ImGui::GetContentRegionAvail().x;
       float ch = ImGui::GetContentRegionAvail().y;
-      if (cw > 60.f && ch > 40.f) draw_table_chart(src, cw, ch, ed);
+      if (cw > 60.f && ch > 40.f) draw_table_chart(src, cw, ch, ed, state.colors);
     }
     ImGui::EndChild();
   }
@@ -383,7 +384,7 @@ inline void draw_source_editor(app_state& state, source_editor_state& ed) {
 
     if (!src.expression.error.empty()) {
       ImGui::Spacing();
-      ImGui::TextColored(ImVec4(1.f, 0.3f, 0.3f, 1.f), "%s",
+      ImGui::TextColored(state.colors.error_text, "%s",
                          src.expression.error.c_str());
     } else if (src.expression.ast_) {
       ImGui::Spacing();
@@ -565,7 +566,7 @@ inline void draw_transmitter(app_state& state) {
                                           ImGuiTreeNodeFlags_DefaultOpen);
 
       if (open) {
-        ImGui::Checkbox("Enable TX", &job.enabled);
+        jcan::checkbox("Enable TX", &job.enabled);
         if (job.enabled && !job.was_enabled)
           job.start_time = tx_job::clock::now();
         job.was_enabled = job.enabled;
@@ -611,9 +612,9 @@ inline void draw_transmitter(app_state& state) {
                 static_cast<uint8_t>(std::clamp(dlc_edit, 0, max_dlc));
           }
           ImGui::SameLine();
-          ImGui::Checkbox("Ext", &job.frame.extended);
+          jcan::checkbox("Ext", &job.frame.extended);
           ImGui::SameLine();
-          ImGui::Checkbox("FD", &job.frame.fd);
+          jcan::checkbox("FD", &job.frame.fd);
 
           uint8_t payload_len = frame_payload_len(job.frame);
           ImGui::Text("Data:");
@@ -683,7 +684,7 @@ inline void draw_transmitter(app_state& state) {
 
               bool has_source = src.mode != source_mode::constant;
               if (has_source)
-                ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "%s",
+                ImGui::TextColored(state.colors.active_source_label, "%s",
                                    label.c_str());
               else
                 ImGui::TextUnformatted(label.c_str());
@@ -696,7 +697,7 @@ inline void draw_transmitter(app_state& state) {
 
                 if (is_bool) {
                   bool bval = (val != 0.0);
-                  if (ImGui::Checkbox(slider_id.c_str(), &bval))
+                  if (jcan::checkbox(slider_id.c_str(), &bval))
                     val = bval ? 1.0 : 0.0;
                 } else if (is_integer) {
                   int ival = static_cast<int>(val);

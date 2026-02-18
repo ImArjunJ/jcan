@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "signal_store.hpp"
+#include "theme.hpp"
 
 namespace jcan::widgets {
 
@@ -59,7 +60,9 @@ inline ImU32 trace_color(int index) {
 }
 
 inline bool draw_strip_chart(strip_chart_state& chart,
-                             const signal_store& store, float height = 200.0f) {
+                             const signal_store& store,
+                             const jcan::semantic_colors& colors,
+                             float height = 200.0f) {
   auto real_now = signal_sample::clock::now();
 
   if (!chart.live_follow &&
@@ -85,8 +88,8 @@ inline bool draw_strip_chart(strip_chart_state& chart,
 
   auto* draw = ImGui::GetWindowDrawList();
 
-  draw->AddRectFilled(canvas_pos, canvas_end, IM_COL32(20, 20, 25, 255));
-  draw->AddRect(canvas_pos, canvas_end, IM_COL32(60, 60, 70, 255));
+  draw->AddRectFilled(canvas_pos, canvas_end, colors.chart_bg);
+  draw->AddRect(canvas_pos, canvas_end, colors.chart_border);
 
   ImGui::InvisibleButton("##chart_area", canvas_size);
   bool hovered = ImGui::IsItemHovered();
@@ -229,7 +232,7 @@ inline bool draw_strip_chart(strip_chart_state& chart,
       float x = time_to_x(t);
       if (x >= canvas_pos.x && x <= canvas_end.x) {
         draw->AddLine(ImVec2(x, canvas_pos.y), ImVec2(x, canvas_end.y),
-                      IM_COL32(50, 50, 60, 255));
+                      colors.chart_grid);
 
         std::string label;
         if (t < 0.01f && t > -0.01f)
@@ -237,7 +240,7 @@ inline bool draw_strip_chart(strip_chart_state& chart,
         else
           label = std::format("-{:.1f}s", t);
         draw->AddText(ImVec2(x + 2, canvas_end.y - 14),
-                      IM_COL32(120, 120, 130, 255), label.c_str());
+                      colors.chart_grid_text, label.c_str());
       }
       t += grid_step_sec;
     }
@@ -261,10 +264,10 @@ inline bool draw_strip_chart(strip_chart_state& chart,
         float y = value_to_y(yv);
         if (y >= canvas_pos.y && y <= canvas_end.y) {
           draw->AddLine(ImVec2(canvas_pos.x, y), ImVec2(canvas_end.x, y),
-                        IM_COL32(50, 50, 60, 255));
+                        colors.chart_grid);
           auto lbl = std::format("{:.4g}", yv);
           draw->AddText(ImVec2(canvas_pos.x + 2, y - 14),
-                        IM_COL32(120, 120, 130, 255), lbl.c_str());
+                        colors.chart_grid_text, lbl.c_str());
         }
         yv += y_step;
       }
@@ -336,7 +339,7 @@ inline bool draw_strip_chart(strip_chart_state& chart,
     if (mouse_x >= canvas_pos.x && mouse_x <= canvas_end.x) {
       draw->AddLine(ImVec2(mouse_x, canvas_pos.y),
                     ImVec2(mouse_x, canvas_end.y),
-                    IM_COL32(200, 200, 200, 100));
+                    colors.chart_cursor);
 
       float frac = (mouse_x - canvas_pos.x) / canvas_size.x;
       float cursor_age = view_end_sec + (1.0f - frac) * chart.view_duration_sec;
