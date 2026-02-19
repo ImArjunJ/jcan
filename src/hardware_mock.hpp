@@ -15,7 +15,9 @@ namespace jcan {
 struct mock_adapter {
   bool open_{false};
   uint32_t seq_{0};
+  can_frame::clock::time_point start_time_{};
 
+  static constexpr int k_target_rate = 10000;
   static constexpr int k_batch_size = 100;
 
   [[nodiscard]] result<> open(
@@ -25,6 +27,7 @@ struct mock_adapter {
     if (open_) return std::unexpected(error_code::already_open);
     open_ = true;
     seq_ = 0;
+    start_time_ = can_frame::clock::now();
     return {};
   }
 
@@ -48,10 +51,8 @@ struct mock_adapter {
   }
 
   [[nodiscard]] result<std::vector<can_frame>> recv_many(
-      unsigned timeout_ms = 100) {
+      [[maybe_unused]] unsigned timeout_ms = 100) {
     if (!open_) return std::unexpected(error_code::not_open);
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    (void)timeout_ms;
 
     static constexpr uint32_t demo_ids[] = {
         0x100, 0x200, 0x310, 0x400, 0x500, 0x600, 0x7DF, 0x123,
@@ -59,11 +60,27 @@ struct mock_adapter {
     static constexpr int n_ids =
         static_cast<int>(sizeof(demo_ids) / sizeof(demo_ids[0]));
 
-    std::vector<can_frame> frames;
-    frames.reserve(k_batch_size);
     auto now = can_frame::clock::now();
+    double elapsed = std::chrono::duration<double>(now - start_time_).count();
+    uint32_t target_seq = static_cast<uint32_t>(elapsed * k_target_rate);
 
-    for (int b = 0; b < k_batch_size; ++b) {
+    if (seq_ >= target_seq) {
+      auto wake = start_time_ + std::chrono::duration_cast<can_frame::clock::duration>(
+                                    std::chrono::duration<double>(
+                                        static_cast<double>(seq_ + 1) / k_target_rate));
+      std::this_thread::sleep_until(wake);
+      now = can_frame::clock::now();
+      elapsed = std::chrono::duration<double>(now - start_time_).count();
+      target_seq = static_cast<uint32_t>(elapsed * k_target_rate);
+    }
+
+    uint32_t to_produce = std::min(target_seq - seq_,
+                                   static_cast<uint32_t>(k_batch_size));
+
+    std::vector<can_frame> frames;
+    frames.reserve(to_produce);
+
+    for (uint32_t b = 0; b < to_produce; ++b) {
       can_frame f{};
       f.timestamp = now;
       f.id = demo_ids[seq_ % n_ids];
@@ -86,7 +103,10 @@ struct mock_adapter {
 struct mock_fd_adapter {
   bool open_{false};
   uint64_t seq_{0};
-  static constexpr int k_batch_size = 4;
+  can_frame::clock::time_point start_time_{};
+
+  static constexpr int k_target_rate = 2000;
+  static constexpr int k_batch_size = 20;
 
   [[nodiscard]] result<> open(
       const std::string&,
@@ -95,6 +115,7 @@ struct mock_fd_adapter {
     if (open_) return std::unexpected(error_code::already_open);
     open_ = true;
     seq_ = 0;
+    start_time_ = can_frame::clock::now();
     return {};
   }
 
@@ -120,7 +141,6 @@ struct mock_fd_adapter {
   [[nodiscard]] result<std::vector<can_frame>> recv_many(
       [[maybe_unused]] unsigned timeout_ms = 100) {
     if (!open_) return std::unexpected(error_code::not_open);
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
 
     static constexpr uint32_t fd_ids[] = {0x18DA00FA, 0x18DB33F1, 0x0CF004FE,
                                           0x18FEF100, 0x0CFF0003};
@@ -128,11 +148,27 @@ struct mock_fd_adapter {
     static constexpr int n_ids =
         static_cast<int>(sizeof(fd_ids) / sizeof(fd_ids[0]));
 
-    std::vector<can_frame> frames;
-    frames.reserve(k_batch_size);
     auto now = can_frame::clock::now();
+    double elapsed = std::chrono::duration<double>(now - start_time_).count();
+    uint64_t target_seq = static_cast<uint64_t>(elapsed * k_target_rate);
 
-    for (int b = 0; b < k_batch_size; ++b) {
+    if (seq_ >= target_seq) {
+      auto wake = start_time_ + std::chrono::duration_cast<can_frame::clock::duration>(
+                                    std::chrono::duration<double>(
+                                        static_cast<double>(seq_ + 1) / k_target_rate));
+      std::this_thread::sleep_until(wake);
+      now = can_frame::clock::now();
+      elapsed = std::chrono::duration<double>(now - start_time_).count();
+      target_seq = static_cast<uint64_t>(elapsed * k_target_rate);
+    }
+
+    uint64_t to_produce = std::min(target_seq - seq_,
+                                   static_cast<uint64_t>(k_batch_size));
+
+    std::vector<can_frame> frames;
+    frames.reserve(static_cast<std::size_t>(to_produce));
+
+    for (uint64_t b = 0; b < to_produce; ++b) {
       can_frame f{};
       f.timestamp = now;
       f.id = fd_ids[seq_ % n_ids];

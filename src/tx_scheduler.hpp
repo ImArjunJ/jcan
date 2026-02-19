@@ -100,6 +100,7 @@ class tx_scheduler {
 
     while (!stop.stop_requested()) {
       auto now = steady_clock::now();
+      float min_wait_ms = 100.f;
 
       {
         std::lock_guard lk(mtx_);
@@ -115,11 +116,23 @@ class tx_scheduler {
               sent_buf_.push(logged);
             }
             job.last_sent = now;
+            min_wait_ms = std::min(min_wait_ms, job.period_ms);
+          } else {
+            float remaining = job.period_ms - elapsed;
+            min_wait_ms = std::min(min_wait_ms, remaining);
           }
         }
       }
 
-      std::this_thread::sleep_for(500us);
+      if (min_wait_ms < 2.f) {
+        auto deadline = now + microseconds(static_cast<int64_t>(min_wait_ms * 1000.f));
+        while (steady_clock::now() < deadline) {
+          std::this_thread::yield();
+        }
+      } else {
+        std::this_thread::sleep_for(microseconds(
+            static_cast<int64_t>((min_wait_ms - 1.f) * 1000.f)));
+      }
     }
   }
 

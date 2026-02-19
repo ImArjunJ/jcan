@@ -45,15 +45,25 @@ inline void draw_connection_panel(app_state& state) {
       ImGui::Indent(28.0f);
       if (slot->slot_dbc.loaded()) {
         auto fnames = slot->slot_dbc.filenames();
-        for (const auto& fn : fnames) {
-          ImGui::TextDisabled("DBC: %s", fn.c_str());
+        auto fpaths = slot->slot_dbc.paths();
+        for (std::size_t di = 0; di < fnames.size(); ++di) {
+          ImGui::PushID(static_cast<int>(di));
+          ImGui::TextDisabled("DBC: %s", fnames[di].c_str());
+          ImGui::SameLine();
+          if (ImGui::SmallButton("Unload")) {
+            slot->slot_dbc.unload_one(fpaths[di]);
+            state.charts_dirty = true;
+          }
+          ImGui::PopID();
         }
-        ImGui::SameLine();
-        if (ImGui::SmallButton("Unload DBC")) {
-          slot->slot_dbc.unload();
+        if (fnames.size() > 1) {
+          if (ImGui::SmallButton("Unload All DBC")) {
+            slot->slot_dbc.unload();
+            state.charts_dirty = true;
+          }
         }
       } else {
-        ImGui::TextDisabled("DBC: (global)");
+        ImGui::TextDisabled("DBC: (none)");
       }
       ImGui::SameLine();
       if (ImGui::SmallButton("Load DBC...")) {
