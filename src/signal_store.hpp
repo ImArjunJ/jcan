@@ -52,8 +52,9 @@ class signal_store {
     auto& buf = data_[key];
     buf.push_back({t, value});
 
-    auto& info = channels_[key];
-    info.key = key;
+    auto [it, inserted] = channels_.try_emplace(key);
+    auto& info = it->second;
+    if (inserted) info.key = key;
     if (!unit.empty()) info.unit = unit;
     if (minimum != maximum) {
       info.minimum = minimum;
@@ -62,7 +63,7 @@ class signal_store {
     info.last_value = value;
     info.last_time = t;
 
-    if (max_seconds_ > 0 && buf.size() > 2) {
+    if (max_seconds_ > 0 && (buf.size() & 63) == 0 && buf.size() > 2) {
       auto cutoff =
           t - std::chrono::duration_cast<signal_sample::clock::duration>(
                   std::chrono::duration<double>(max_seconds_));

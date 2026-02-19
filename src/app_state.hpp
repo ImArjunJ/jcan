@@ -167,6 +167,20 @@ struct app_state {
     float sig_height{0.f};
   };
   std::vector<frame_row> monitor_rows;
+  struct monitor_key {
+    uint32_t id;
+    bool extended;
+    uint8_t source;
+    bool operator==(const monitor_key&) const = default;
+  };
+  struct monitor_key_hash {
+    std::size_t operator()(const monitor_key& k) const {
+      return std::hash<uint64_t>{}(
+          (static_cast<uint64_t>(k.id) << 9) |
+          (k.extended ? 0x100ULL : 0) | k.source);
+    }
+  };
+  std::unordered_map<monitor_key, int, monitor_key_hash> monitor_index;
   std::vector<frame_row> frozen_rows;
   std::deque<can_frame> scrollback;
   bool monitor_autoscroll{true};
@@ -188,8 +202,6 @@ struct app_state {
   can_frame::clock::time_point first_frame_time{};
   bool has_first_frame{false};
 
-  dbc_engine dbc;
-  std::vector<std::string> dbc_paths;
   std::map<uint8_t, dbc_engine> log_dbc;
   std::vector<can_frame> imported_frames;
   std::set<uint8_t> log_channels;
@@ -235,17 +247,22 @@ struct app_state {
   std::atomic<float> export_progress{0.f};
   std::string export_result_msg;
 
+  static const dbc_engine& empty_dbc() {
+    static const dbc_engine e;
+    return e;
+  }
+
   const dbc_engine& dbc_for_frame(const can_frame& f) const {
     if (log_mode) {
       auto it = log_dbc.find(f.source);
       if (it != log_dbc.end() && it->second.loaded()) return it->second;
-      return dbc;
+      return empty_dbc();
     }
     if (f.source < adapter_slots.size()) {
       auto& slot_dbc = adapter_slots[f.source]->slot_dbc;
       if (slot_dbc.loaded()) return slot_dbc;
     }
-    return dbc;
+    return empty_dbc();
   }
 
   bool any_dbc_has_message(const can_frame& f) const {
@@ -253,14 +270,12 @@ struct app_state {
   }
 
   bool any_dbc_loaded() const {
-    if (dbc.loaded()) return true;
     if (log_mode) {
       for (const auto& [ch, eng] : log_dbc)
         if (eng.loaded()) return true;
     }
-    for (const auto& slot : adapter_slots) {
+    for (const auto& slot : adapter_slots)
       if (slot->slot_dbc.loaded()) return true;
-    }
     return false;
   }
 
@@ -269,29 +284,27 @@ struct app_state {
       auto it = log_dbc.find(source);
       if (it != log_dbc.end() && it->second.loaded())
         return it->second.message_name(id);
-      return dbc.message_name(id);
+      return {};
     }
     if (source < adapter_slots.size()) {
       auto& slot_dbc = adapter_slots[source]->slot_dbc;
       if (slot_dbc.loaded()) return slot_dbc.message_name(id);
     }
-    return dbc.message_name(id);
+    return {};
   }
 
   std::string any_message_name(uint32_t id) const {
-    auto name = dbc.message_name(id);
-    if (!name.empty()) return name;
     if (log_mode) {
       for (const auto& [ch, eng] : log_dbc) {
         if (eng.loaded()) {
-          name = eng.message_name(id);
+          auto name = eng.message_name(id);
           if (!name.empty()) return name;
         }
       }
     }
     for (const auto& slot : adapter_slots) {
       if (slot->slot_dbc.loaded()) {
-        name = slot->slot_dbc.message_name(id);
+        auto name = slot->slot_dbc.message_name(id);
         if (!name.empty()) return name;
       }
     }
@@ -304,21 +317,19 @@ struct app_state {
 
   std::vector<uint32_t> all_message_ids() const {
     std::set<uint32_t> ids;
-    for (auto id : dbc.message_ids()) ids.insert(id);
     for (const auto& slot : adapter_slots) {
       if (slot->slot_dbc.loaded())
-        for (auto id : slot->slot_dbc.message_ids()) ids.insert(id);
+        for (auto mid : slot->slot_dbc.message_ids()) ids.insert(mid);
     }
     if (log_mode) {
       for (const auto& [ch, eng] : log_dbc)
         if (eng.loaded())
-          for (auto id : eng.message_ids()) ids.insert(id);
+          for (auto mid : eng.message_ids()) ids.insert(mid);
     }
     return {ids.begin(), ids.end()};
   }
 
   const dbc_engine& dbc_for_id(uint32_t id) const {
-    if (dbc.has_message(id)) return dbc;
     for (const auto& slot : adapter_slots) {
       if (slot->slot_dbc.loaded() && slot->slot_dbc.has_message(id))
         return slot->slot_dbc;
@@ -328,7 +339,7 @@ struct app_state {
         if (eng.loaded() && eng.has_message(id)) return eng;
       }
     }
-    return dbc;
+    return empty_dbc();
   }
 
   void start_export(const std::string& path) {
@@ -599,19 +610,16 @@ struct app_state {
       }
 
       if (!monitor_freeze) {
-        bool found = false;
-        for (auto& row : monitor_rows) {
-          if (row.frame.id == f.id && row.frame.extended == f.extended &&
-              row.frame.source == f.source) {
-            auto dt = f.timestamp - row.frame.timestamp;
-            row.dt_ms = std::chrono::duration<float, std::milli>(dt).count();
-            row.frame = f;
-            row.count++;
-            found = true;
-            break;
-          }
-        }
-        if (!found) {
+        monitor_key mk{f.id, f.extended, f.source};
+        auto it = monitor_index.find(mk);
+        if (it != monitor_index.end()) {
+          auto& row = monitor_rows[it->second];
+          auto dt = f.timestamp - row.frame.timestamp;
+          row.dt_ms = std::chrono::duration<float, std::milli>(dt).count();
+          row.frame = f;
+          row.count++;
+        } else {
+          monitor_index[mk] = static_cast<int>(monitor_rows.size());
           monitor_rows.push_back({.frame = f, .count = 1, .dt_ms = 0.f});
         }
       }
@@ -681,21 +689,24 @@ struct app_state {
     replay_progress.store(0.f);
   }
 
+  bool charts_dirty{false};
+
   void clear_monitor() {
     monitor_rows.clear();
+    monitor_index.clear();
     frozen_rows.clear();
     scrollback.clear();
     stats.reset();
     signals.clear();
     overlay_layers.clear();
     has_first_frame = false;
+    charts_dirty = true;
   }
 
   float import_log(std::vector<std::pair<int64_t, can_frame>> frames) {
     if (frames.empty()) return 0.f;
     log_mode = true;
     log_dbc.clear();
-    dbc.unload();
     clear_monitor();
 
     int64_t first_ts = frames.front().first;
@@ -781,7 +792,6 @@ struct app_state {
 
     log_mode = true;
     log_dbc.clear();
-    dbc.unload();
     clear_monitor();
     imported_frames.clear();
     log_channels.clear();

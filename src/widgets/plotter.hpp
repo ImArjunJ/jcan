@@ -75,6 +75,11 @@ inline void draw_plotter(app_state& state, plotter_state& ps) {
     return;
   }
 
+  if (state.charts_dirty) {
+    for (auto& ch : ps.charts) ch.traces.clear();
+    state.charts_dirty = false;
+  }
+
   if (!state.any_dbc_loaded() && state.signals.channel_count() == 0) {
     ImGui::TextDisabled("Load a DBC file to decode and plot signals");
     ImGui::TextDisabled("File > Load DBC  |  Ctrl+O  |  Drag & drop .dbc file");

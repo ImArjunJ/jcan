@@ -165,6 +165,24 @@ inline bool draw_strip_chart(strip_chart_state& chart,
   }
   float view_start_sec = view_end_sec + chart.view_duration_sec;
 
+  using deque_t = std::deque<signal_sample>;
+  auto visible_range = [&](const deque_t& samps, float time_off)
+      -> std::pair<deque_t::const_iterator, deque_t::const_iterator> {
+    auto t_oldest = now - std::chrono::duration_cast<signal_sample::clock::duration>(
+                             std::chrono::duration<float>(view_start_sec - time_off));
+    auto t_newest = now - std::chrono::duration_cast<signal_sample::clock::duration>(
+                             std::chrono::duration<float>(view_end_sec - time_off));
+    auto it_begin = std::lower_bound(samps.begin(), samps.end(), t_oldest,
+        [](const signal_sample& s, const signal_sample::clock::time_point& tp) {
+          return s.time < tp;
+        });
+    auto it_end = std::upper_bound(it_begin, samps.end(), t_newest,
+        [](const signal_sample::clock::time_point& tp, const signal_sample& s) {
+          return tp < s.time;
+        });
+    return {it_begin, it_end};
+  };
+
   auto time_to_x = [&](float sec_ago) -> float {
     float frac = 1.0f - (sec_ago - view_end_sec) / chart.view_duration_sec;
     return canvas_pos.x + frac * canvas_size.x;
@@ -234,11 +252,11 @@ inline bool draw_strip_chart(strip_chart_state& chart,
       if (!ts) continue;
       const auto* samps = ts->samples(tr.key);
       if (!samps || samps->empty()) continue;
-      for (const auto& s : *samps) {
-        float age = std::chrono::duration<float>(now - s.time).count() + toff;
-        if (age > view_start_sec || age < view_end_sec) continue;
+      auto [cb, ce] = visible_range(*samps, toff);
+      for (auto it = cb; it != ce; ++it) {
+        float age = std::chrono::duration<float>(now - it->time).count() + toff;
         float px_x = canvas_pos.x + (1.0f - (age - view_end_sec) / chart.view_duration_sec) * canvas_size.x;
-        float px_y = canvas_pos.y + (1.0f - static_cast<float>((s.value - chart.y_min) / (chart.y_max - chart.y_min))) * canvas_size.y;
+        float px_y = canvas_pos.y + (1.0f - static_cast<float>((it->value - chart.y_min) / (chart.y_max - chart.y_min))) * canvas_size.y;
         float dx = px_x - mouse_px_x;
         float dy = px_y - mouse_px_y;
         float dist = dx * dx + dy * dy;
@@ -293,13 +311,11 @@ inline bool draw_strip_chart(strip_chart_state& chart,
       const auto* samps = ya_store->samples(tr.key);
       if (!samps || samps->empty()) continue;
 
-      for (const auto& s : *samps) {
-        float age = std::chrono::duration<float>(now - s.time).count() + ya_off;
-        if (age < view_start_sec && age >= view_end_sec) {
-          y_lo = std::min(y_lo, s.value);
-          y_hi = std::max(y_hi, s.value);
-          has_data = true;
-        }
+      auto [vb, ve] = visible_range(*samps, ya_off);
+      for (auto it = vb; it != ve; ++it) {
+        y_lo = std::min(y_lo, it->value);
+        y_hi = std::max(y_hi, it->value);
+        has_data = true;
       }
     }
 
@@ -400,9 +416,10 @@ inline bool draw_strip_chart(strip_chart_state& chart,
     if (pixel_width < 1) pixel_width = 1;
     std::vector<bin> bins(static_cast<std::size_t>(pixel_width));
 
-    for (const auto& s : *samps) {
+    auto [rb, re] = visible_range(*samps, tr_off);
+    for (auto it = rb; it != re; ++it) {
+      const auto& s = *it;
       float age = std::chrono::duration<float>(now - s.time).count() + tr_off;
-      if (age > view_start_sec || age < view_end_sec) continue;
 
       float x = time_to_x(age);
       int px = static_cast<int>(x - canvas_pos.x);
@@ -466,16 +483,21 @@ inline bool draw_strip_chart(strip_chart_state& chart,
           const auto* samps = tt_store->samples(tr.key);
           if (!samps || samps->empty()) continue;
 
+          auto target_time = now - std::chrono::duration_cast<signal_sample::clock::duration>(
+                                      std::chrono::duration<float>(cursor_age - tt_off));
+          auto tt_it = std::lower_bound(samps->begin(), samps->end(), target_time,
+              [](const signal_sample& s, const signal_sample::clock::time_point& tp) {
+                return s.time < tp;
+              });
           double best_val = 0.0;
           float best_dist = 1e30f;
-          for (const auto& s : *samps) {
-            float age = std::chrono::duration<float>(now - s.time).count() + tt_off;
+          auto check = [&](decltype(tt_it) cand) {
+            float age = std::chrono::duration<float>(now - cand->time).count() + tt_off;
             float dist = std::abs(age - cursor_age);
-            if (dist < best_dist) {
-              best_dist = dist;
-              best_val = s.value;
-            }
-          }
+            if (dist < best_dist) { best_dist = dist; best_val = cand->value; }
+          };
+          if (tt_it != samps->end()) check(tt_it);
+          if (tt_it != samps->begin()) check(std::prev(tt_it));
           if (best_dist < chart.view_duration_sec) {
             ImVec4 col = ImGui::ColorConvertU32ToFloat4(tr.color);
             ImGui::TextColored(col, "%s: %.4g", tr.key.name.c_str(), best_val);

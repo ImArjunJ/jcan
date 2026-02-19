@@ -36,6 +36,7 @@ static void glfw_error_callback(int error, const char* description) {
 enum class dialog_id { none, open_dbc, open_replay, import_log, export_log, add_overlay };
 
 static jcan::app_state* g_drop_state = nullptr;
+static std::string g_pending_dbc_path;
 
 static void glfw_drop_callback([[maybe_unused]] GLFWwindow* window, int count,
                                const char** paths) {
@@ -47,14 +48,7 @@ static void glfw_drop_callback([[maybe_unused]] GLFWwindow* window, int count,
       std::string ext = path.substr(path.size() - 4);
       for (auto& c : ext) c = static_cast<char>(std::tolower(c));
       if (ext == ".dbc") {
-        auto err = g_drop_state->dbc.load(path);
-        if (err.empty()) {
-          g_drop_state->redecode_log();
-          g_drop_state->status_text = std::format(
-              "DBC: {} msgs", g_drop_state->dbc.message_ids().size());
-        } else {
-          g_drop_state->status_text = err;
-        }
+        g_pending_dbc_path = path;
         return;
       }
     }
@@ -171,9 +165,7 @@ int main() {
     state.show_plotter = settings.show_plotter;
     state.log_dir = settings.effective_log_dir();
 
-    for (const auto& p : settings.dbc_paths) {
-      if (std::filesystem::exists(p)) state.dbc.load(p);
-    }
+    (void)settings.dbc_paths;
 
     state.devices = jcan::discover_adapters();
 
@@ -194,6 +186,7 @@ int main() {
     float pending_scale = 0.f;
     bool pending_theme = false;
     bool pending_import_confirm = false;
+    std::string pending_dbc_path;
     jcan::widgets::plotter_state plotter;
 
     while (!glfwWindowShouldClose(window)) {
@@ -246,23 +239,7 @@ int main() {
       if (ImGui::BeginMainMenuBar()) {
         if (ImGui::BeginMenu("File")) {
           if (state.log_mode && !state.imported_frames.empty()) {
-            if (state.log_channels.size() <= 1) {
-              if (ImGui::MenuItem("Load DBC...", "Ctrl+O", false,
-                                  !file_dialog.busy())) {
-                pending_dbc_channel = 0xff;
-                file_dialog.open_file({{"DBC Files", "dbc"}});
-                pending_dialog = dialog_id::open_dbc;
-              }
-              if (state.dbc.loaded()) {
-                ImGui::SameLine();
-                ImGui::TextDisabled("(%s)",
-                                    state.dbc.filenames().front().c_str());
-                if (ImGui::MenuItem("Unload DBC")) {
-                  state.dbc.unload();
-                  state.redecode_log();
-                }
-              }
-            } else {
+            {
               if (ImGui::BeginMenu("Log DBC")) {
                 for (uint8_t ch : state.log_channels) {
                   ImGui::PushID(ch);
@@ -519,7 +496,7 @@ int main() {
       }
       if (state.log_mode && io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_O) &&
           !file_dialog.busy()) {
-        pending_dbc_channel = 0xff;
+        pending_dbc_channel = state.log_channels.empty() ? uint8_t{0} : *state.log_channels.begin();
         file_dialog.open_file({{"DBC Files", "dbc"}});
         pending_dialog = dialog_id::open_dbc;
       }
@@ -550,7 +527,6 @@ int main() {
         ImGui::Spacing();
         if (ImGui::Button("Continue", ImVec2(120, 0))) {
           state.disconnect();
-          state.dbc.unload();
           file_dialog.open_file({{"All Logs", "csv,asc,ld"},
                                  {"MoTec i2", "ld"},
                                  {"CSV / ASC", "csv,asc"}});
@@ -564,20 +540,61 @@ int main() {
         ImGui::EndPopup();
       }
 
+      if (!g_pending_dbc_path.empty()) {
+        ImGui::OpenPopup("Load DBC Into##picker");
+      }
+      if (ImGui::BeginPopupModal("Load DBC Into##picker", nullptr,
+                                  ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Select target for DBC:");
+        ImGui::Separator();
+
+        auto load_into = [&](jcan::dbc_engine& eng, const std::string& name) {
+          auto err = eng.load(g_pending_dbc_path);
+          if (err.empty()) {
+            if (state.log_mode) state.redecode_log();
+            state.status_text = std::format("{}: {} msgs", name, eng.message_ids().size());
+          } else {
+            state.status_text = err;
+          }
+          g_pending_dbc_path.clear();
+          ImGui::CloseCurrentPopup();
+        };
+
+        if (state.log_mode) {
+          for (uint8_t ch : state.log_channels) {
+            auto label = std::format("Channel {}", static_cast<int>(ch));
+            if (ImGui::MenuItem(label.c_str()))
+              load_into(state.log_dbc[ch], label);
+          }
+          if (state.log_channels.empty()) {
+            if (ImGui::MenuItem("Channel 0"))
+              load_into(state.log_dbc[0], "Channel 0");
+          }
+        } else {
+          for (std::size_t i = 0; i < state.adapter_slots.size(); ++i) {
+            auto& slot = state.adapter_slots[i];
+            auto label = slot->desc.friendly_name;
+            if (ImGui::MenuItem(label.c_str()))
+              load_into(slot->slot_dbc, label);
+          }
+          if (state.adapter_slots.empty()) {
+            ImGui::TextDisabled("No adapters connected");
+          }
+        }
+
+        ImGui::Separator();
+        if (ImGui::MenuItem("Cancel")) {
+          g_pending_dbc_path.clear();
+          ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+      }
+
       if (auto result = file_dialog.poll()) {
         switch (pending_dialog) {
           case dialog_id::open_dbc:
             if (*result) {
-              if (pending_dbc_channel == 0xff) {
-                auto err = state.dbc.load(**result);
-                if (err.empty()) {
-                  state.redecode_log();
-                  state.status_text = std::format(
-                      "DBC: {} msgs", state.dbc.message_ids().size());
-                } else {
-                  state.status_text = err;
-                }
-              } else {
+              if (pending_dbc_channel != 0xff) {
                 auto& eng = state.log_dbc[pending_dbc_channel];
                 auto err = eng.load(**result);
                 if (err.empty()) {
@@ -589,6 +606,8 @@ int main() {
                 } else {
                   state.status_text = err;
                 }
+              } else {
+                g_pending_dbc_path = **result;
               }
             }
             break;
@@ -759,7 +778,7 @@ int main() {
       settings.ui_scale = state.ui_scale;
       settings.theme = static_cast<int>(state.current_theme);
       settings.log_dir = state.log_dir.string();
-      settings.dbc_paths = state.dbc.paths();
+      settings.dbc_paths.clear();
       if (!state.adapter_slots.empty())
         settings.last_adapter_port = state.adapter_slots[0]->desc.port;
       int w, h;
