@@ -83,6 +83,79 @@ struct mock_adapter {
   }
 };
 
+struct mock_fd_adapter {
+  bool open_{false};
+  uint64_t seq_{0};
+  static constexpr int k_batch_size = 4;
+
+  [[nodiscard]] result<> open(
+      const std::string&,
+      [[maybe_unused]] slcan_bitrate bitrate = slcan_bitrate::s6,
+      [[maybe_unused]] unsigned baud = 0) {
+    if (open_) return std::unexpected(error_code::already_open);
+    open_ = true;
+    seq_ = 0;
+    return {};
+  }
+
+  [[nodiscard]] result<> close() {
+    if (!open_) return std::unexpected(error_code::not_open);
+    open_ = false;
+    return {};
+  }
+
+  [[nodiscard]] result<> send(const can_frame&) {
+    if (!open_) return std::unexpected(error_code::not_open);
+    return {};
+  }
+
+  [[nodiscard]] result<std::optional<can_frame>> recv(
+      unsigned timeout_ms = 100) {
+    auto batch = recv_many(timeout_ms);
+    if (!batch) return std::unexpected(batch.error());
+    if (batch->empty()) return std::optional<can_frame>{std::nullopt};
+    return std::optional<can_frame>{batch->front()};
+  }
+
+  [[nodiscard]] result<std::vector<can_frame>> recv_many(
+      [[maybe_unused]] unsigned timeout_ms = 100) {
+    if (!open_) return std::unexpected(error_code::not_open);
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
+    static constexpr uint32_t fd_ids[] = {0x18DA00FA, 0x18DB33F1, 0x0CF004FE,
+                                          0x18FEF100, 0x0CFF0003};
+    static constexpr uint8_t fd_dlcs[] = {12, 16, 24, 32, 64};
+    static constexpr int n_ids =
+        static_cast<int>(sizeof(fd_ids) / sizeof(fd_ids[0]));
+
+    std::vector<can_frame> frames;
+    frames.reserve(k_batch_size);
+    auto now = can_frame::clock::now();
+
+    for (int b = 0; b < k_batch_size; ++b) {
+      can_frame f{};
+      f.timestamp = now;
+      f.id = fd_ids[seq_ % n_ids];
+      f.extended = true;
+      f.fd = true;
+      f.brs = true;
+      f.dlc = len_to_dlc(fd_dlcs[seq_ % n_ids]);
+
+      uint8_t payload_len = fd_dlcs[seq_ % n_ids];
+      double t = static_cast<double>(seq_) * 0.001;
+      for (uint8_t i = 0; i < payload_len; ++i) {
+        double wave =
+            std::sin(t * (1.0 + i * 0.3) + f.id * 0.05) * 127.0 + 128.0;
+        f.data[i] = static_cast<uint8_t>(static_cast<int>(wave) & 0xFF);
+      }
+
+      ++seq_;
+      frames.push_back(f);
+    }
+    return frames;
+  }
+};
+
 struct mock_echo_adapter {
   struct shared_state {
     std::mutex mtx;

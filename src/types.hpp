@@ -107,6 +107,7 @@ enum class adapter_kind : uint8_t {
   kvaser_canlib,
   mock,
   mock_echo,
+  mock_fd,
   unbound,
 };
 

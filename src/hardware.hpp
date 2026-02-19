@@ -30,7 +30,7 @@ using adapter = std::variant<serial_slcan, socket_can,
 #ifdef _WIN32
                              kvaser_canlib,
 #endif
-                             mock_adapter, mock_echo_adapter>;
+                             mock_adapter, mock_echo_adapter, mock_fd_adapter>;
 
 [[nodiscard]] inline result<> adapter_open(
     adapter& a, const std::string& port,
@@ -87,6 +87,8 @@ using adapter = std::variant<serial_slcan, socket_can,
       return mock_adapter{};
     case adapter_kind::mock_echo:
       return mock_echo_adapter{};
+    case adapter_kind::mock_fd:
+      return mock_fd_adapter{};
     case adapter_kind::unbound:
       return mock_adapter{};
   }

@@ -407,6 +407,12 @@ static const known_vector_device* find_known_vector(int pid) {
       .friendly_name = "Virtual Echo Adapter",
   });
 
+  out.push_back(device_descriptor{
+      .kind = adapter_kind::mock_fd,
+      .port = "mockfd0",
+      .friendly_name = "Virtual CAN-FD Adapter",
+  });
+
   return out;
 }
 
