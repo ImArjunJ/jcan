@@ -132,11 +132,16 @@ struct app_state {
     adapter hw;
     frame_buffer<8192> rx_buf;
     std::optional<std::jthread> io_thread;
+    std::atomic<bool> io_paused{false};
     dbc_engine slot_dbc;
 
     void start_io() {
       io_thread.emplace([this](std::stop_token stop) {
         while (!stop.stop_requested()) {
+          if (io_paused.load()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            continue;
+          }
           auto result = adapter_recv_many(hw, 50);
           if (!result) {
             if (std::getenv("JCAN_DEBUG"))
@@ -462,11 +467,15 @@ struct app_state {
       }
     }
 
+    for (auto& s : adapter_slots) s->io_paused.store(true);
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+
     auto slot = std::make_unique<adapter_slot>();
     slot->desc = desc;
     slot->hw = make_adapter(desc);
     auto bitrate = static_cast<slcan_bitrate>(selected_bitrate);
     if (auto r = adapter_open(slot->hw, desc.port, bitrate); !r) {
+      for (auto& s : adapter_slots) s->io_paused.store(false);
       if (r.error() == error_code::permission_denied) {
 #ifdef _WIN32
         status_text = std::format(
@@ -477,24 +486,26 @@ struct app_state {
         status_text =
             std::format("Permission denied: {} - requesting fix...", desc.port);
         if (install_udev_rule()) {
-          std::this_thread::sleep_for(std::chrono::milliseconds(500));
+          std::this_thread::sleep_for(std::chrono::milliseconds(1500));
           slot->hw = make_adapter(desc);
           if (auto r2 = adapter_open(slot->hw, desc.port, bitrate); !r2) {
-            status_text = std::format("Still failed after fix: {}",
-                                      to_string(r2.error()));
+            status_text = std::format(
+                "Still failed after udev fix. Try unplugging and "
+                "replugging the device, then click Connect again.");
             return;
           }
           status_text = "Permissions fixed!";
         } else {
-          status_text = "Permission fix cancelled.";
+          status_text = "Permission fix cancelled or pkexec not available.";
           return;
         }
 #endif
       } else {
-        status_text = std::format("Open failed: {}", to_string(r.error()));
+        status_text = std::format("Open failed: {} - {}", desc.port, to_string(r.error()));
         return;
       }
     }
+    for (auto& s : adapter_slots) s->io_paused.store(false);
     slot->start_io();
     adapter_slots.push_back(std::move(slot));
     connected = true;

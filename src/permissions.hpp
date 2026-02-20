@@ -17,10 +17,17 @@ inline constexpr const char* k_udev_rule_path =
     "/etc/udev/rules.d/99-jcan-serial.rules";
 
 inline constexpr const char* k_udev_rule_content =
-    R"(SUBSYSTEM=="tty", ATTRS{idVendor}=="0403", MODE="0666"
+    R"(# Serial adapters (FTDI, CH340, CP210x)
+SUBSYSTEM=="tty", ATTRS{idVendor}=="0403", MODE="0666"
 SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", MODE="0666"
 SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", MODE="0666"
 SUBSYSTEM=="tty", ATTRS{bInterfaceClass}=="02", MODE="0666"
+# USB CAN adapters (Vector, Kvaser, Peak, 8devices, Innomaker)
+SUBSYSTEM=="usb", ATTR{idVendor}=="1248", MODE="0666"
+SUBSYSTEM=="usb", ATTR{idVendor}=="0bfd", MODE="0666"
+SUBSYSTEM=="usb", ATTR{idVendor}=="0c72", MODE="0666"
+SUBSYSTEM=="usb", ATTR{idVendor}=="1d50", MODE="0666"
+SUBSYSTEM=="usb", ATTR{idVendor}=="0483", MODE="0666"
 )";
 
 inline bool device_accessible(const std::string& path) {
@@ -47,7 +54,8 @@ inline bool install_udev_rule() {
 
   auto install_cmd = std::string("pkexec sh -c 'cp ") + tmp.string() + " " +
                      k_udev_rule_path + " && udevadm control --reload-rules" +
-                     " && udevadm trigger --subsystem-match=tty'";
+                     " && udevadm trigger --subsystem-match=tty" +
+                     " && udevadm trigger --subsystem-match=usb'";
   int rc = std::system(install_cmd.c_str());
 
   std::filesystem::remove(tmp);

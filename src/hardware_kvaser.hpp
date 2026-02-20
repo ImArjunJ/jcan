@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstring>
 #include <format>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <thread>
@@ -244,9 +245,41 @@ inline constexpr uint32_t SWOPTION_CAN_CLK_MASK = 0x6000;
 
 }  // namespace kvaser
 
+struct kvaser_shared_usb {
+  libusb_context* ctx{nullptr};
+  libusb_device_handle* dev{nullptr};
+  int refcount{0};
+  uint8_t bus{0};
+  uint8_t addr{0};
+  bool init_done{false};
+  uint8_t ep_bulk_in{0};
+  uint8_t ep_bulk_out{0};
+  uint16_t max_packet_in{64};
+  uint16_t max_packet_out{64};
+  uint8_t channel_count{1};
+  uint16_t max_outstanding_tx{0};
+  bool is_mhydra{false};
+  bool use_hydra_ext{false};
+  uint8_t channel2he[kvaser::HYDRA_MAX_CARD_CHANNELS]{};
+  uint8_t he2channel[kvaser::MAX_HE_COUNT]{};
+  uint32_t can_clock_mhz{80};
+  uint8_t ep_cmd_in{0};
+};
+
+inline std::mutex& kvaser_shared_mtx() {
+  static std::mutex mtx;
+  return mtx;
+}
+
+inline std::vector<kvaser_shared_usb>& kvaser_shared_devs() {
+  static std::vector<kvaser_shared_usb> devs;
+  return devs;
+}
+
 struct kvaser_usb {
   libusb_context* ctx_{nullptr};
   libusb_device_handle* dev_{nullptr};
+  bool shared_handle_{false};
   bool open_{false};
   uint8_t channel_{0};
   uint8_t ep_bulk_in_{0};
@@ -356,6 +389,37 @@ struct kvaser_usb {
 
     is_mhydra_ = kvaser::is_mhydra_pid(target_pid);
 
+    {
+      auto* usb_dev = libusb_get_device(dev_);
+      uint8_t bus = libusb_get_bus_number(usb_dev);
+      uint8_t addr = libusb_get_device_address(usb_dev);
+
+      std::lock_guard lk(kvaser_shared_mtx());
+      for (auto& sh : kvaser_shared_devs()) {
+        if (sh.bus == bus && sh.addr == addr && sh.dev && sh.init_done) {
+          libusb_close(dev_);
+          libusb_exit(ctx_);
+          dev_ = sh.dev;
+          ctx_ = sh.ctx;
+          ep_bulk_in_ = sh.ep_bulk_in;
+          ep_bulk_out_ = sh.ep_bulk_out;
+          max_packet_in_ = sh.max_packet_in;
+          max_packet_out_ = sh.max_packet_out;
+          channel_count_ = sh.channel_count;
+          max_outstanding_tx_ = sh.max_outstanding_tx;
+          is_mhydra_ = sh.is_mhydra;
+          use_hydra_ext_ = sh.use_hydra_ext;
+          std::memcpy(channel2he_, sh.channel2he, sizeof(channel2he_));
+          std::memcpy(he2channel_, sh.he2channel, sizeof(he2channel_));
+          can_clock_mhz_ = sh.can_clock_mhz;
+          ep_cmd_in_ = sh.ep_cmd_in;
+          sh.refcount++;
+          shared_handle_ = true;
+          goto skip_init;
+        }
+      }
+    }
+
     if (libusb_kernel_driver_active(dev_, 0) == 1)
       libusb_detach_kernel_driver(dev_, 0);
 
@@ -370,6 +434,18 @@ struct kvaser_usb {
       ctx_ = nullptr;
       return std::unexpected(error_code::permission_denied);
     }
+
+    {
+      auto* usb_dev = libusb_get_device(dev_);
+      std::lock_guard lk(kvaser_shared_mtx());
+      kvaser_shared_devs().push_back({
+          ctx_, dev_, 1,
+          libusb_get_bus_number(usb_dev),
+          libusb_get_device_address(usb_dev)});
+      shared_handle_ = true;
+    }
+
+    skip_claim:
 
     if (is_mhydra_) {
       if (auto res = discover_endpoints_mhydra(); !res) {
@@ -413,6 +489,68 @@ struct kvaser_usb {
       }
     }
 
+    {
+      std::lock_guard lk(kvaser_shared_mtx());
+      for (auto& sh : kvaser_shared_devs()) {
+        if (sh.dev == dev_) {
+          sh.init_done = true;
+          sh.ep_bulk_in = ep_bulk_in_;
+          sh.ep_bulk_out = ep_bulk_out_;
+          sh.max_packet_in = max_packet_in_;
+          sh.max_packet_out = max_packet_out_;
+          sh.channel_count = channel_count_;
+          sh.max_outstanding_tx = max_outstanding_tx_;
+          sh.is_mhydra = is_mhydra_;
+          sh.use_hydra_ext = use_hydra_ext_;
+          std::memcpy(sh.channel2he, channel2he_, sizeof(channel2he_));
+          std::memcpy(sh.he2channel, he2channel_, sizeof(he2channel_));
+          sh.can_clock_mhz = can_clock_mhz_;
+          sh.ep_cmd_in = ep_cmd_in_;
+          break;
+        }
+      }
+    }
+
+    goto skip_init_done;
+
+    skip_init:
+    flush_rx();
+    if (is_mhydra_) {
+      {
+        std::array<uint8_t, 32> cmd{};
+        cmd[0] = kvaser::CMD_SET_DRIVERMODE_REQ;
+        kvaser::hydra_set_dst(cmd.data(), channel2he_[channel_]);
+        cmd[4] = kvaser::DRIVERMODE_NORMAL;
+        if (auto r2 = mhydra_send_cmd(cmd.data()); !r2) return r2;
+      }
+      {
+        static constexpr uint32_t bitrate_bps_map[] = {
+            10000, 20000, 50000, 100000, 125000, 250000, 500000, 800000, 1000000};
+        uint32_t br = bitrate_bps_map[static_cast<unsigned>(bitrate) %
+                                      (sizeof(bitrate_bps_map) / sizeof(bitrate_bps_map[0]))];
+        uint8_t ts1, ts2, sw;
+        compute_mhydra_timing(br, ts1, ts2, sw);
+        std::array<uint8_t, 32> cmd{};
+        cmd[0] = kvaser::CMD_SET_BUSPARAMS_REQ;
+        kvaser::hydra_set_dst(cmd.data(), channel2he_[channel_]);
+        cmd[4] = static_cast<uint8_t>(br);
+        cmd[5] = static_cast<uint8_t>(br >> 8);
+        cmd[6] = static_cast<uint8_t>(br >> 16);
+        cmd[7] = static_cast<uint8_t>(br >> 24);
+        cmd[8] = ts1; cmd[9] = ts2; cmd[10] = sw; cmd[11] = 1;
+        std::array<uint8_t, 32> resp{};
+        if (auto r2 = mhydra_send_and_wait(cmd.data(), kvaser::CMD_SET_BUSPARAMS_RESP, resp.data(), 32); !r2)
+          return r2;
+        if (debug())
+          std::fprintf(stderr, "[kvaser] mhydra ch%u busparams: bitrate=%u\n", channel_, br);
+      }
+      if (auto r2 = mhydra_cmd_start_chip(); !r2) return r2;
+    } else {
+      return std::unexpected(error_code::port_open_failed);
+    }
+
+    skip_init_done:
+
     open_ = true;
     if (debug()) {
       auto* kp = kvaser::find_any(target_pid);
@@ -432,11 +570,27 @@ struct kvaser_usb {
       (void)cmd_stop_chip(channel_);
     }
 
-    libusb_release_interface(dev_, 0);
-    libusb_close(dev_);
-    libusb_exit(ctx_);
+    if (shared_handle_) {
+      std::lock_guard lk(kvaser_shared_mtx());
+      for (auto it = kvaser_shared_devs().begin(); it != kvaser_shared_devs().end(); ++it) {
+        if (it->dev == dev_) {
+          if (--it->refcount <= 0) {
+            libusb_release_interface(dev_, 0);
+            libusb_close(dev_);
+            libusb_exit(ctx_);
+            kvaser_shared_devs().erase(it);
+          }
+          break;
+        }
+      }
+    } else {
+      libusb_release_interface(dev_, 0);
+      libusb_close(dev_);
+      libusb_exit(ctx_);
+    }
     dev_ = nullptr;
     ctx_ = nullptr;
+    shared_handle_ = false;
     open_ = false;
     if (debug()) std::fprintf(stderr, "[kvaser] closed\n");
     return {};
