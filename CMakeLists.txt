@@ -251,23 +251,21 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 endif()
 
 if(JCAN_ENABLE_VECTOR)
-    # Embed VN1640A firmware blobs via .incbin assembly directive
-    set(JCAN_FW_MAIN_BIN "${CMAKE_CURRENT_SOURCE_DIR}/firmware/vn1640a_main_fw.bin")
-    set(JCAN_FW_FPGA_BIN "${CMAKE_CURRENT_SOURCE_DIR}/firmware/vn1640a_fpga.bin")
-    if(WIN32)
-        set(JCAN_ASM_RODATA_SECTION ".rdata,\"dr\"")
-    else()
-        set(JCAN_ASM_RODATA_SECTION ".rodata")
-    endif()
-    configure_file(
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/firmware_blobs.S.in
-        ${CMAKE_CURRENT_BINARY_DIR}/firmware_blobs.S
-        @ONLY
-    )
-    target_sources(jcan_core PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/firmware_blobs.S)
-    target_link_libraries(jcan_core PUBLIC usb_static)
     target_compile_definitions(jcan_core PUBLIC JCAN_HAS_VECTOR=1)
     target_compile_definitions(jcan_core PUBLIC JCAN_HAS_KVASER=1)
+
+    if(NOT WIN32)
+        set(JCAN_FW_MAIN_BIN "${CMAKE_CURRENT_SOURCE_DIR}/firmware/vn1640a_main_fw.bin")
+        set(JCAN_FW_FPGA_BIN "${CMAKE_CURRENT_SOURCE_DIR}/firmware/vn1640a_fpga.bin")
+        set(JCAN_ASM_RODATA_SECTION ".rodata")
+        configure_file(
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/firmware_blobs.S.in
+            ${CMAKE_CURRENT_BINARY_DIR}/firmware_blobs.S
+            @ONLY
+        )
+        target_sources(jcan_core PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/firmware_blobs.S)
+        target_link_libraries(jcan_core PUBLIC usb_static)
+    endif()
 endif()
 
 if(WIN32)
